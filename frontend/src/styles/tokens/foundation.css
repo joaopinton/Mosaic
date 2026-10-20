@@ -1,0 +1,126 @@
+/*
+ * Mosaic · fondamenta: tipografia, spazio, raggi, ombre, movimento, layout.
+ * Indipendenti dalla palette. I componenti usano questi token, mai valori letterali.
+ */
+
+:root {
+  /* Tipografia: sans moderno e geometrico (Gilroy standardizzato con Collabtest) */
+  --font-gilroy: "Gilroy", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --font-sans: var(--font-gilroy);
+  --font-display: var(--font-gilroy);
+  --font-ui: var(--font-gilroy);
+  --font-editorial: "Source Serif 4", "Iowan Old Style", "Charter", Georgia, serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "Cascadia Mono", monospace;
+
+  /* Scala di interfaccia (densità da strumento di lavoro: base 15 px) */
+  --text-2xs: 0.6875rem;  /* 11 px: solo etichette maiuscole */
+  --text-xs: 0.75rem;     /* 12 px */
+  --text-sm: 0.8125rem;   /* 13 px: tabelle, meta */
+  --text-base: 0.9375rem; /* 15 px: chat, corpo */
+  --text-md: 1.0625rem;   /* 17 px: titoli di sezione */
+  --text-lg: 1.25rem;     /* 20 px: titoli di pannello */
+  --text-xl: 1.5rem;      /* 24 px: titolo della ricerca */
+  --text-2xl: clamp(1.75rem, 1.35rem + 1.2vw, 2.25rem); /* dossier */
+  --text-display: clamp(2rem, 1.4rem + 2.2vw, 3rem);    /* stato vuoto */
+
+  --leading-tight: 1.2;
+  --leading-snug: 1.35;
+  --leading-normal: 1.55;
+  --tracking-caps: 0.06em;
+  --tracking-display: -0.025em;
+  --tracking-tight: -0.011em;
+
+  --weight-regular: 400;
+  --weight-medium: 500;
+  --weight-semibold: 600;
+
+  /* Spazio: base 4 px, con salti voluti fra densità di riga e respiro di sezione */
+  --space-0-5: 0.125rem;
+  --space-1: 0.25rem;
+  --space-1-5: 0.375rem;
+  --space-2: 0.5rem;
+  --space-2-5: 0.625rem;
+  --space-3: 0.75rem;
+  --space-3-5: 0.875rem;
+  --space-4: 1rem;
+  --space-5: 1.25rem;
+  --space-6: 1.5rem;
+  --space-7: 1.75rem;
+  --space-8: 2rem;
+  --space-10: 2.5rem;
+  --space-12: 3rem;
+  --space-16: 4rem;
+
+  /* Raggi: differenziati per ruolo, non uniformi */
+  --radius-chip: 4px;
+  --radius-control: 8px;
+  --radius-panel: 12px;
+  --radius-dialog: 16px;
+  --radius-shell: 16px;
+  --radius-pill: 999px;
+
+  /* Bordi */
+  --border-width: 1px;
+  --border-width-strong: 1.5px;
+
+  /* Ombre: stratificate e neutre (vedi --shadow-color) */
+  --shadow-1: 0 1px 0 var(--shadow-color);
+  --shadow-2: 0 1px 2px var(--shadow-color), 0 2px 6px -2px var(--shadow-color);
+  --shadow-3: 0 2px 4px var(--shadow-color), 0 12px 28px -8px var(--shadow-color);
+  --shadow-4: 0 4px 8px var(--shadow-color), 0 24px 56px -12px var(--shadow-color);
+  --shadow-shell: 0 10px 30px -8px var(--shadow-color), 0 2px 8px -2px var(--shadow-color);
+
+  /* Focus: anello doppio, visibile su qualunque superficie */
+  --focus-ring: 0 0 0 2px var(--bg-surface), 0 0 0 4px var(--border-focus);
+
+  /* Movimento: breve, con uscita morbida; il movimento spiega, non decora */
+  --dur-instant: 80ms;
+  --dur-fast: 140ms;
+  --dur-base: 220ms;
+  --dur-slow: 360ms;
+  --dur-reorder: 420ms;
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --ease-in: cubic-bezier(0.55, 0, 1, 0.45);
+  /* Fogli e finestre (come collabtest): decelerazione morbida, l'uscita usa la stessa curva */
+  --ease-sheet: cubic-bezier(0.32, 0.72, 0, 1);
+  /* Molla leggera (poco rimbalzo) per ciò che nasce da un punto: dialoghi, menu, popover, avvisi */
+  --ease-spring: linear(0, 0.402 7.4%, 0.711 15.3%, 0.929 23.7%, 1.008 28.2%, 1.067 33%, 1.099 36.9%, 1.12 41.7%, 1.123 45.5%, 1.113 49.9%, 1.081 56.9%, 1.037 66.5%, 1.011 74.3%, 0.999 84.3%, 1);
+
+  /* Controlli: tre altezze sole. 28 dentro le righe e per i chip, 36 di default, 44 solo per i campi
+     grandi (ricerca). Sugli schermi tattili il minimo sale a 40. I pulsanti icona sono quadrati. */
+  --control-h-sm: 1.75rem;
+  --control-h: 2.25rem;
+  --control-h-lg: 2.75rem;
+  --control-h-touch: 2.5rem;
+  --nav-item-h: 2rem;     /* voci della sidebar */
+
+  /* Larghezze del contenuto: testata e contenuto partono dalla stessa colonna */
+  --content-reading: 47.5rem; /* 760 px: conversazione, impostazioni */
+  --content-wide: 67.5rem;    /* 1080 px: dossier, parametri, galleria, stile dei report */
+  --page-pad: var(--space-6); /* margine della pagina dentro la cornice */
+
+  /* Layout dell'area di lavoro */
+  --shell-gap: var(--space-3);
+  --sidebar-w: 272px;
+  --sidebar-w-collapsed: 72px;
+  --chat-max: 46rem;
+  --topbar-h: 52px;
+  --row-h: 64px;          /* riga compatta: altezza fissa, niente salti */
+  --row-h-expanded: auto;
+
+  /* Livelli */
+  --z-sticky: 10;
+  --z-overlay: 40;
+  --z-toast: 60;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --dur-instant: 0ms;
+    --dur-fast: 0ms;
+    --dur-base: 0ms;
+    --dur-slow: 0ms;
+    --dur-reorder: 0ms;
+  }
+}

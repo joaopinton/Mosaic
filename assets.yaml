@@ -1,0 +1,85 @@
+# Asset locali di Mosaic: modelli e programmi portabili.
+# Scaricati da `python -m mosaic.assets fetch` (richiamato da setup.ps1) e verificati con SHA-256.
+# Per i file Hugging Face lo SHA-256 viene letto dai metadati LFS del repository.
+
+assets:
+  siglip2:
+    group: core
+    kind: huggingface
+    repo: onnx-community/siglip2-base-patch16-224-ONNX
+    dest: models/siglip2-base-224
+    files:
+      - onnx/vision_model_int8.onnx
+      - onnx/text_model_int8.onnx
+      - tokenizer.json
+      - tokenizer_config.json
+      - special_tokens_map.json
+      - preprocessor_config.json
+      - config.json
+
+  yunet:
+    group: core
+    kind: huggingface
+    repo: opencv/face_detection_yunet
+    dest: models/faces
+    files: [face_detection_yunet_2023mar.onnx]
+
+  sface:
+    group: core
+    kind: huggingface
+    repo: opencv/face_recognition_sface
+    dest: models/faces
+    files: [face_recognition_sface_2021dec.onnx]
+
+  # ArcFace (buffalo_l, w600k_r50): licenza InsightFace valida solo per uso non commerciale
+  arcface:
+    group: core
+    kind: huggingface
+    repo: public-data/insightface
+    dest: models/faces
+    files: [models/buffalo_l/w600k_r50.onnx]
+
+  exiftool:
+    group: core
+    kind: archive
+    url: https://sourceforge.net/projects/exiftool/files/exiftool-13.59_64.zip/download
+    sha256: 44b512b25af500724ba579d0a53c8fc5851628b692dd5e5d94ae4a15c2cba9ec
+    dest: runtime/exiftool
+    strip_root: true
+    rename: {"exiftool(-k).exe": exiftool.exe}
+
+  ffmpeg:
+    group: core
+    kind: archive
+    url: https://www.gyan.dev/ffmpeg/builds/packages/ffmpeg-9.0.2-essentials_build.zip
+    sha256: 60f467265b1e312373dbcd92200c2618a74850f98d3d078e94296bb3fa2047ba
+    dest: runtime/ffmpeg
+    only: [bin/ffmpeg.exe, bin/ffprobe.exe]
+
+  llama:
+    group: llm
+    kind: github
+    repo: ggml-org/llama.cpp
+    tag: b11721
+    asset: llama-b11721-bin-win-cpu-x64.zip
+    dest: runtime/llama
+
+  # Modello predefinito (Apache-2.0, circa 1,5 GB): su un PC con 8 GB resta in RAM, circa 17 s a foto (vedi D-06)
+  qwen3vl:
+    group: llm
+    kind: huggingface
+    repo: Qwen/Qwen3-VL-2B-Instruct-GGUF
+    dest: models/llm
+    files:
+      - Qwen3VL-2B-Instruct-Q4_K_M.gguf
+      - mmproj-Qwen3VL-2B-Instruct-Q8_0.gguf
+
+  # Alternativa più grande (circa 2,8 GB), solo con RAM in abbondanza: llm.model = qwen25vl-3b
+  qwen25vl:
+    group: llm-extra
+    kind: huggingface
+    repo: ggml-org/Qwen2.5-VL-3B-Instruct-GGUF
+    dest: models/llm
+    files:
+      - Qwen2.5-VL-3B-Instruct-Q4_K_M.gguf
+      - mmproj-Qwen2.5-VL-3B-Instruct-Q8_0.gguf

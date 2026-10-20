@@ -1,0 +1,20 @@
+import '@fontsource/ibm-plex-mono/latin-400.css'
+import '@fontsource/ibm-plex-mono/latin-500.css'
+import '@fontsource/outfit/latin-400.css'
+import '@fontsource/outfit/latin-500.css'
+import '@fontsource/outfit/latin-600.css'
+import '@fontsource/outfit/latin-700.css'
+import '@fontsource/outfit/latin-800.css'
+import { createApp } from 'vue'
+import App from './App.vue'
+import { applyAppearance } from './lib/theme'
+import { router } from './router'
+import './styles/tokens/palettes.css'
+import './styles/tokens/semantic.css'
+import './styles/tokens/foundation.css'
+import './styles/tokens/base.css'
+import './styles/app.css'
+import './styles/controls.css'
+
+applyAppearance()
+createApp(App).use(router).mount('#app')

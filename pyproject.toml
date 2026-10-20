@@ -1,0 +1,41 @@
+[project]
+name = "mosaic"
+version = "2.0.0"
+description = "Gestore di foto e video completamente locale, con ricerca semantica, volti e descrizioni AI."
+requires-python = ">=3.12"
+readme = "README.md"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-p no:cacheprovider"
+filterwarnings = ["ignore::DeprecationWarning:imagehash.*", "ignore::DeprecationWarning:pywt.*"]
+
+[tool.coverage.run]
+source = ["mosaic"]
+omit = ["mosaic/__main__.py", "mosaic/app.py"]
+
+[tool.coverage.report]
+show_missing = true
+skip_empty = true
+
+[tool.ruff]
+line-length = 130
+target-version = "py312"
+extend-exclude = ["_legacy", "frontend", "runtime", "models", "data", ".venv"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "S", "SIM", "RUF"]
+# S608: l'SQL dinamico del progetto contiene solo segnaposto "?", nomi di colonna scelti da un elenco fisso o ORDER BY presi
+# da un dizionario; i valori passano sempre come parametri (verificato riga per riga, vedi docs/rebuild/VERIFICATION.md).
+# S603/S607: i sottoprocessi (exiftool, ffmpeg, llama-server) ricevono liste di argomenti, mai una shell.
+# S101: gli assert servono solo a restringere i tipi (es. stdin/stdout di un Popen).
+ignore = ["E501", "S101", "S603", "S607", "S608", "B008", "RUF001", "RUF002", "RUF003", "UP037"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S", "B", "SIM", "RUF"]
+
+[tool.bandit]
+exclude_dirs = ["tests", "_legacy", "frontend", ".venv", "runtime"]
+# B608: stesso motivo di S608 sopra. B404/B603/B607: sottoprocessi senza shell, con argomenti in lista.
+# B101: assert solo per restringere i tipi. B106: "<pad>" è un token del tokenizer, non una password.
+skips = ["B608", "B404", "B603", "B607", "B101", "B106"]

@@ -1,0 +1,308 @@
+# Vocabolario delle etichette zero-shot. Si può modificare liberamente: dopo una modifica gli embedding dei prompt
+# si ricalcolano da soli (cache per hash del contenuto). `it`/`en` generano i prompt dai modelli in `patterns`;
+# `cat` è la categoria; `t` (facoltativo) è una soglia di confidenza specifica; `prompts` (facoltativo) sostituisce
+# i prompt generati.
+patterns:
+  - "una foto di {it}"
+  - "a photo of {en}"
+
+# Confidenza minima per categoria: le etichette di stile e di documento sono vaghe e attirano le immagini astratte.
+category_threshold:
+  Stile: 0.60
+  Documenti: 0.50
+
+labels:
+  # --- Moto (dominio di Mosaic) ---------------------------------------------------------
+  - {it: moto, en: a motorcycle, cat: Moto}
+  - {it: moto sportiva, en: a sport motorcycle, cat: Moto}
+  - {it: moto da corsa, en: a racing motorcycle, cat: Moto}
+  - {it: moto custom, en: a custom chopper motorcycle, cat: Moto}
+  - {it: moto d'epoca, en: a vintage motorcycle, cat: Moto}
+  - {it: moto da enduro, en: an off-road enduro motorcycle, cat: Moto}
+  - {it: scooter, en: a scooter, cat: Moto}
+  - {it: Vespa, en: a Piaggio Vespa scooter, cat: Moto}
+  - {it: Ducati, en: a Ducati motorcycle, cat: Moto}
+  - {it: Harley-Davidson, en: a Harley-Davidson motorcycle, cat: Moto}
+  - {it: BMW moto, en: a BMW motorcycle, cat: Moto}
+  - {it: Yamaha, en: a Yamaha motorcycle, cat: Moto}
+  - {it: Honda moto, en: a Honda motorcycle, cat: Moto}
+  - {it: Kawasaki, en: a Kawasaki motorcycle, cat: Moto}
+  - {it: Suzuki moto, en: a Suzuki motorcycle, cat: Moto}
+  - {it: MV Agusta, en: an MV Agusta motorcycle, cat: Moto}
+  - {it: Moto Guzzi, en: a Moto Guzzi motorcycle, cat: Moto}
+  - {it: Triumph, en: a Triumph motorcycle, cat: Moto}
+  - {it: Aprilia, en: an Aprilia motorcycle, cat: Moto}
+  - {it: KTM, en: a KTM motorcycle, cat: Moto}
+  - {it: Lambretta, en: a Lambretta scooter, cat: Moto}
+  - {it: casco, en: a motorcycle helmet, cat: Moto}
+  - {it: motociclista, en: a motorcyclist, cat: Moto}
+  - {it: serbatoio, en: a motorcycle fuel tank, cat: Moto}
+  - {it: motore, en: an engine, cat: Moto}
+  - {it: ruota, en: a wheel, cat: Moto}
+  - {it: freno a disco, en: a brake disc, cat: Moto}
+  - {it: manubrio, en: motorcycle handlebars, cat: Moto}
+  - {it: scarico, en: an exhaust pipe, cat: Moto}
+  - {it: cupolino, en: a motorcycle fairing, cat: Moto}
+  - {it: sella, en: a motorcycle seat, cat: Moto}
+  - {it: strumentazione, en: a motorcycle instrument cluster, cat: Moto}
+  - {it: raduno di moto, en: a motorcycle gathering, cat: Eventi}
+  # --- Auto -----------------------------------------------------------------------------
+  - {it: auto, en: a car, cat: Auto}
+  - {it: auto sportiva, en: a sports car, cat: Auto}
+  - {it: supercar, en: a supercar, cat: Auto}
+  - {it: auto d'epoca, en: a vintage car, cat: Auto}
+  - {it: Ferrari, en: a Ferrari, cat: Auto}
+  - {it: Lamborghini, en: a Lamborghini, cat: Auto}
+  - {it: Porsche, en: a Porsche, cat: Auto}
+  - {it: Maserati, en: a Maserati, cat: Auto}
+  - {it: Alfa Romeo, en: an Alfa Romeo, cat: Auto}
+  - {it: Fiat 500, en: a Fiat 500, cat: Auto}
+  - {it: Mini, en: a Mini Cooper, cat: Auto}
+  - {it: Mercedes, en: a Mercedes-Benz car, cat: Auto}
+  - {it: Audi, en: an Audi car, cat: Auto}
+  - {it: BMW auto, en: a BMW car, cat: Auto}
+  - {it: Ford Mustang, en: a Ford Mustang, cat: Auto}
+  - {it: Jeep, en: a Jeep, cat: Auto}
+  - {it: SUV, en: an SUV, cat: Auto}
+  - {it: furgone, en: a van, cat: Auto}
+  - {it: camion, en: a truck, cat: Auto}
+  - {it: trattore, en: a tractor, cat: Auto}
+  - {it: cerchione, en: a car alloy wheel, cat: Auto}
+  - {it: faro, en: a car headlight, cat: Auto}
+  - {it: abitacolo, en: a car interior, cat: Auto}
+  - {it: targa, en: a license plate, cat: Auto}
+  - {it: logo, en: a brand logo, cat: Oggetti}
+  # --- Altri mezzi ----------------------------------------------------------------------
+  - {it: bicicletta, en: a bicycle, cat: Mezzi}
+  - {it: bici da corsa, en: a road racing bicycle, cat: Mezzi}
+  - {it: mountain bike, en: a mountain bike, cat: Mezzi}
+  - {it: treno, en: a train, cat: Mezzi}
+  - {it: tram, en: a tram, cat: Mezzi}
+  - {it: autobus, en: a bus, cat: Mezzi}
+  - {it: aereo, en: an airplane, cat: Mezzi}
+  - {it: elicottero, en: a helicopter, cat: Mezzi}
+  - {it: barca, en: a boat, cat: Mezzi}
+  - {it: barca a vela, en: a sailing boat, cat: Mezzi}
+  - {it: nave, en: a ship, cat: Mezzi}
+  - {it: gondola, en: a gondola, cat: Mezzi}
+  - {it: drone, en: a drone, cat: Mezzi}
+  # --- Persone --------------------------------------------------------------------------
+  # Niente etichette sulla persona in sé (persona, uomo, donna, ritratto...): chi c'è lo dicono i volti.
+  - {it: folla, en: a crowd of people, cat: Persone}
+  - {it: coppia, en: a couple, cat: Persone}
+  - {it: famiglia, en: a family, cat: Persone}
+  - {it: amici, en: a group of friends, cat: Persone}
+  - {it: sposi, en: a bride and groom, cat: Persone}
+  - {it: pilota, en: a racing rider in leathers, cat: Persone}
+  - {it: musicista, en: a musician performing, cat: Persone}
+  # --- Eventi e luoghi di evento --------------------------------------------------------
+  - {it: festa, en: a party, cat: Eventi}
+  - {it: concerto, en: a concert, cat: Eventi}
+  - {it: palco, en: a stage, cat: Eventi}
+  - {it: stand espositivo, en: an exhibition stand, cat: Eventi}
+  - {it: mostra, en: an exhibition, cat: Eventi}
+  - {it: fiera, en: a trade fair, cat: Eventi}
+  - {it: mercatino, en: an outdoor market, cat: Eventi}
+  - {it: premiazione, en: an award ceremony, cat: Eventi}
+  - {it: trofeo, en: a trophy, cat: Eventi}
+  - {it: coppa, en: a cup trophy, cat: Eventi}
+  - {it: striscione, en: a banner, cat: Eventi}
+  - {it: locandina, en: a poster, cat: Eventi}
+  - {it: matrimonio, en: a wedding, cat: Eventi}
+  - {it: compleanno, en: a birthday party, cat: Eventi}
+  - {it: festa di natale, en: a christmas celebration, cat: Eventi}
+  - {it: fuochi d'artificio, en: fireworks, cat: Eventi}
+  - {it: corteo, en: a parade, cat: Eventi}
+  - {it: cerimonia, en: a ceremony, cat: Eventi}
+  - {it: laurea, en: a graduation, cat: Eventi}
+  - {it: pubblico, en: an audience, cat: Eventi}
+  # --- Sport ----------------------------------------------------------------------------
+  - {it: corsa, en: a race, cat: Sport}
+  - {it: circuito, en: a racing circuit, cat: Sport}
+  - {it: calcio, en: a soccer match, cat: Sport}
+  - {it: basket, en: a basketball game, cat: Sport}
+  - {it: tennis, en: a tennis match, cat: Sport}
+  - {it: nuoto, en: swimming, cat: Sport}
+  - {it: corsa a piedi, en: people running, cat: Sport}
+  - {it: ciclismo, en: cycling, cat: Sport}
+  - {it: sci, en: skiing, cat: Sport}
+  - {it: arrampicata, en: rock climbing, cat: Sport}
+  - {it: surf, en: surfing, cat: Sport}
+  - {it: palestra, en: a gym, cat: Sport}
+  - {it: yoga, en: yoga, cat: Sport}
+  - {it: golf, en: golf, cat: Sport}
+  - {it: pallavolo, en: a volleyball game, cat: Sport}
+  - {it: motocross, en: motocross, cat: Sport}
+  - {it: rally, en: a rally race, cat: Sport}
+  # --- Natura e paesaggi ----------------------------------------------------------------
+  - {it: paesaggio, en: a landscape, cat: Paesaggi}
+  - {it: montagna, en: a mountain, cat: Paesaggi}
+  - {it: montagne innevate, en: snowy mountains, cat: Paesaggi}
+  - {it: collina, en: rolling hills, cat: Paesaggi}
+  - {it: valle, en: a valley, cat: Paesaggi}
+  - {it: lago, en: a lake, cat: Paesaggi}
+  - {it: fiume, en: a river, cat: Paesaggi}
+  - {it: cascata, en: a waterfall, cat: Paesaggi}
+  - {it: mare, en: the sea, cat: Paesaggi}
+  - {it: spiaggia, en: a beach, cat: Paesaggi}
+  - {it: scogliera, en: a cliff by the sea, cat: Paesaggi}
+  - {it: isola, en: an island, cat: Paesaggi}
+  - {it: deserto, en: a desert, cat: Paesaggi}
+  - {it: campagna, en: the countryside, cat: Paesaggi}
+  - {it: campo di grano, en: a wheat field, cat: Paesaggi}
+  - {it: vigneto, en: a vineyard, cat: Paesaggi}
+  - {it: bosco, en: a forest, cat: Natura}
+  - {it: albero, en: a tree, cat: Natura}
+  - {it: fiore, en: a flower, cat: Natura}
+  - {it: prato, en: a meadow, cat: Natura}
+  - {it: foglie, en: leaves, cat: Natura}
+  - {it: neve, en: snow, cat: Natura}
+  - {it: ghiaccio, en: ice, cat: Natura}
+  - {it: nebbia, en: fog, cat: Natura}
+  - {it: pioggia, en: rain, cat: Natura}
+  - {it: temporale, en: a storm, cat: Natura}
+  - {it: arcobaleno, en: a rainbow, cat: Natura}
+  - {it: tramonto, en: a sunset, cat: Cielo}
+  - {it: alba, en: a sunrise, cat: Cielo}
+  - {it: cielo blu, en: a blue sky, cat: Cielo}
+  - {it: nuvole, en: clouds, cat: Cielo}
+  - {it: cielo stellato, en: a starry night sky, cat: Cielo}
+  - {it: luna, en: the moon, cat: Cielo}
+  - {it: notte, en: a night scene, cat: Cielo}
+  # --- Animali --------------------------------------------------------------------------
+  - {it: cane, en: a dog, cat: Animali}
+  - {it: gatto, en: a cat, cat: Animali}
+  - {it: cavallo, en: a horse, cat: Animali}
+  - {it: mucca, en: a cow, cat: Animali}
+  - {it: pecora, en: a sheep, cat: Animali}
+  - {it: uccello, en: a bird, cat: Animali}
+  - {it: gabbiano, en: a seagull, cat: Animali}
+  - {it: anatra, en: a duck, cat: Animali}
+  - {it: farfalla, en: a butterfly, cat: Animali}
+  - {it: ape, en: a bee, cat: Animali}
+  - {it: pesce, en: a fish, cat: Animali}
+  - {it: delfino, en: a dolphin, cat: Animali}
+  - {it: elefante, en: an elephant, cat: Animali}
+  - {it: leone, en: a lion, cat: Animali}
+  - {it: orso, en: a bear, cat: Animali}
+  - {it: volpe, en: a fox, cat: Animali}
+  - {it: cervo, en: a deer, cat: Animali}
+  - {it: coniglio, en: a rabbit, cat: Animali}
+  - {it: serpente, en: a snake, cat: Animali}
+  - {it: ragno, en: a spider, cat: Animali}
+  - {it: pappagallo, en: a parrot, cat: Animali}
+  - {it: scoiattolo, en: a squirrel, cat: Animali}
+  # --- Architettura e luoghi ------------------------------------------------------------
+  - {it: edificio, en: a building, cat: Architettura}
+  - {it: grattacielo, en: a skyscraper, cat: Architettura}
+  - {it: casa, en: a house, cat: Architettura}
+  - {it: castello, en: a castle, cat: Architettura}
+  - {it: chiesa, en: a church, cat: Architettura}
+  - {it: cattedrale, en: a cathedral, cat: Architettura}
+  - {it: campanile, en: a bell tower, cat: Architettura}
+  - {it: ponte, en: a bridge, cat: Architettura}
+  - {it: torre, en: a tower, cat: Architettura}
+  - {it: rovine, en: ancient ruins, cat: Architettura}
+  - {it: monumento, en: a monument, cat: Architettura}
+  - {it: fontana, en: a fountain, cat: Architettura}
+  - {it: piazza, en: a town square, cat: Architettura}
+  - {it: strada, en: a street, cat: Architettura}
+  - {it: vicolo, en: a narrow alley, cat: Architettura}
+  - {it: città, en: a city, cat: Architettura}
+  - {it: città di notte, en: a city at night, cat: Architettura}
+  - {it: paese, en: a small village, cat: Architettura}
+  - {it: porto, en: a harbor, cat: Architettura}
+  - {it: faro marittimo, en: a lighthouse, cat: Architettura}
+  - {it: stazione, en: a train station, cat: Architettura}
+  - {it: aeroporto, en: an airport, cat: Architettura}
+  - {it: autostrada, en: a highway, cat: Architettura}
+  - {it: parcheggio, en: a parking lot, cat: Architettura}
+  - {it: ex fabbrica, en: an old industrial building, cat: Architettura}
+  - {it: cortile, en: a courtyard, cat: Architettura}
+  - {it: portico, en: a portico with arches, cat: Architettura}
+  - {it: interno, en: an indoor room, cat: Interni}
+  - {it: salotto, en: a living room, cat: Interni}
+  - {it: cucina, en: a kitchen, cat: Interni}
+  - {it: camera da letto, en: a bedroom, cat: Interni}
+  - {it: bagno, en: a bathroom, cat: Interni}
+  - {it: ufficio, en: an office, cat: Interni}
+  - {it: negozio, en: a shop, cat: Interni}
+  - {it: ristorante, en: a restaurant, cat: Interni}
+  - {it: bar, en: a bar, cat: Interni}
+  - {it: biblioteca, en: a library, cat: Interni}
+  - {it: museo, en: a museum, cat: Interni}
+  - {it: officina, en: a workshop garage, cat: Interni}
+  - {it: capannone, en: a large warehouse hall, cat: Interni}
+  # --- Cibo -----------------------------------------------------------------------------
+  - {it: cibo, en: food, cat: Cibo}
+  - {it: pizza, en: a pizza, cat: Cibo}
+  - {it: pasta, en: a plate of pasta, cat: Cibo}
+  - {it: panino, en: a sandwich, cat: Cibo}
+  - {it: hamburger, en: a hamburger, cat: Cibo}
+  - {it: insalata, en: a salad, cat: Cibo}
+  - {it: carne alla griglia, en: grilled meat, cat: Cibo}
+  - {it: pesce cucinato, en: a cooked fish dish, cat: Cibo}
+  - {it: dolce, en: a dessert, cat: Cibo}
+  - {it: torta, en: a cake, cat: Cibo}
+  - {it: gelato, en: ice cream, cat: Cibo}
+  - {it: caffè, en: a cup of coffee, cat: Cibo}
+  - {it: vino, en: a glass of wine, cat: Cibo}
+  - {it: birra, en: a glass of beer, cat: Cibo}
+  - {it: cocktail, en: a cocktail, cat: Cibo}
+  - {it: frutta, en: fruit, cat: Cibo}
+  - {it: verdura, en: vegetables, cat: Cibo}
+  - {it: pane, en: bread, cat: Cibo}
+  - {it: colazione, en: a breakfast, cat: Cibo}
+  - {it: tavola apparecchiata, en: a set dining table, cat: Cibo}
+  # --- Oggetti e documenti --------------------------------------------------------------
+  - {it: documento, en: a document, cat: Documenti}
+  - {it: testo, en: a page of text, cat: Documenti}
+  - {it: schermata, en: a screenshot, cat: Documenti}
+  - {it: ricevuta, en: a receipt, cat: Documenti}
+  - {it: lavagna, en: a whiteboard, cat: Documenti}
+  - {it: cartello stradale, en: a road sign, cat: Documenti}
+  - {it: grafico, en: a chart or diagram, cat: Documenti}
+  - {it: mappa, en: a map, cat: Documenti}
+  - {it: libro, en: a book, cat: Oggetti}
+  - {it: computer, en: a computer, cat: Tecnologia}
+  - {it: telefono, en: a smartphone, cat: Tecnologia}
+  - {it: macchina fotografica, en: a camera, cat: Tecnologia}
+  - {it: televisione, en: a television, cat: Tecnologia}
+  - {it: videogioco, en: a video game, cat: Tecnologia}
+  - {it: chitarra, en: a guitar, cat: Oggetti}
+  - {it: pianoforte, en: a piano, cat: Oggetti}
+  - {it: orologio, en: a wristwatch, cat: Oggetti}
+  - {it: gioielli, en: jewelry, cat: Oggetti}
+  - {it: borsa, en: a handbag, cat: Oggetti}
+  - {it: scarpe, en: shoes, cat: Oggetti}
+  - {it: giacca di pelle, en: a leather jacket, cat: Oggetti}
+  - {it: abito, en: a dress, cat: Oggetti}
+  - {it: occhiali da sole, en: sunglasses, cat: Oggetti}
+  - {it: giocattolo, en: a toy, cat: Oggetti}
+  - {it: palloncini, en: balloons, cat: Oggetti}
+  - {it: candele, en: candles, cat: Oggetti}
+  - {it: regalo, en: a gift, cat: Oggetti}
+  - {it: attrezzi, en: tools, cat: Oggetti}
+  - {it: bandiera, en: a flag, cat: Oggetti}
+  - {it: bandiera italiana, en: an Italian flag, cat: Oggetti}
+  - {it: adesivo, en: a sticker, cat: Oggetti}
+  - {it: bicchiere, en: a drinking glass, cat: Oggetti}
+  # --- Arte e stile fotografico ---------------------------------------------------------
+  - {it: dipinto, en: a painting, cat: Arte}
+  - {it: scultura, en: a sculpture, cat: Arte}
+  - {it: graffiti, en: graffiti, cat: Arte}
+  - {it: illustrazione, en: an illustration, cat: Arte}
+  - {it: fumetto, en: a cartoon, cat: Arte}
+  - {it: grafica, en: a graphic design, cat: Arte}
+  - {it: bianco e nero, en: a black and white photograph, cat: Stile}
+  - {it: macro, en: a macro close-up photograph, cat: Stile}
+  - {it: primo piano, en: a close-up, cat: Stile}
+  - {it: panorama, en: a wide panoramic view, cat: Stile}
+  - {it: dall'alto, en: an aerial view from above, cat: Stile}
+  - {it: silhouette, en: a silhouette, cat: Stile}
+  - {it: riflesso, en: a reflection, cat: Stile}
+  - {it: sfocato, en: a blurry photo, cat: Stile}
+  - {it: controluce, en: a backlit photo, cat: Stile}
+  - {it: esposizione lunga, en: a long exposure photograph, cat: Stile}
+  - {it: dettaglio, en: a detail shot of an object, cat: Stile}
+  - {it: pattern, en: a repeating pattern, cat: Stile}

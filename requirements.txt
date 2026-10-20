@@ -1,0 +1,17 @@
+numpy>=2.4
+scipy>=1.15
+pillow>=12.2
+pillow-heif>=1.8
+rawpy>=0.27
+onnxruntime>=1.29
+opencv-python-headless>=5.0
+tokenizers>=0.23
+huggingface_hub>=1.0
+fastapi>=0.146
+uvicorn[standard]>=0.54
+pydantic>=2.14
+pyyaml>=6.0
+httpx>=0.28
+watchdog>=6.0
+imagehash>=4.3
+pywebview>=6.2; sys_platform == "win32"

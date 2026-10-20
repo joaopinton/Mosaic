@@ -1,0 +1,63 @@
+# Registro dei modelli (sulla linea di vision.yml di PhotoPrism).
+# I vettori sono sempre salvati con il model_id che li ha prodotti e non si confrontano mai tra modelli diversi:
+# per cambiare modello si imposta ai.model in config.yaml e si riesegue `mosaic analyze --all`.
+
+embedding:
+  siglip2-base-224:
+    dir: siglip2-base-224
+    vision: vision_model_int8.onnx
+    text: text_model_int8.onnx
+    tokenizer: tokenizer.json
+    dim: 768
+    image_size: 224
+    mean: [0.5, 0.5, 0.5]
+    std: [0.5, 0.5, 0.5]
+    text_length: 64
+    # Sigmoide di SigLIP: p = sigmoid(logit_scale * cos + logit_bias). Valori tarati su immagini reali,
+    # modificabili qui senza toccare il codice.
+    logit_scale: 117.0
+    logit_bias: -12.0
+
+faces:
+  detector:
+    id: yunet-2023mar
+    file: faces/face_detection_yunet_2023mar.onnx
+    input_size: 640        # lato lungo dell'immagine data al rilevatore (fit_720 ridotta)
+    score_floor: 65        # punteggio minimo (0-100)
+    cluster_score: 85      # punteggio minimo per partecipare al clustering
+    nms: 0.3
+    overlap: 0.42          # due rilevamenti con sovrapposizione > 42% sono lo stesso volto
+  recognizer:
+    id: arcface-w600k-r50
+    file: faces/w600k_r50.onnx
+    engine: arcface        # sface | arcface (ONNX tramite il runtime condiviso)
+    dim: 512
+    input_size: 112
+    flip: false            # true = media tra il ritaglio e il suo specchio (2x più lento; sui volti nominati non ha migliorato)
+    # Soglie tarate con `python scripts/face_eval.py --compare` sui volti nominati (vedi D-05)
+    cluster_dist: 1.05
+    cluster_radius: 0.90
+    cluster_slack: 0.25    # un volto entra in un cluster se dista dal centroide meno di raggio + 0,25
+    match_dist: 1.10       # volto senza cluster: sotto questa distanza dai volti nominati prende il nome da solo
+    match_margin: 0.05
+    max_match_dist: 1.20   # fino a qui il nome resta un suggerimento da confermare
+  size: 25                 # dimensione minima del volto in pixel dell'originale
+  size_retry: 10           # secondo passaggio, solo se il primo non trova volti
+  cluster_size: 112        # dimensione minima per il clustering
+  cluster_core: 3
+  cluster_core_retry: 2
+  # solo volti in primo piano (D-22): la folla sullo sfondo non viene riconosciuta né raggruppata
+  foreground_size: 0.07    # altezza minima del volto rispetto al lato corto della foto
+  foreground_ratio: 0.5    # e almeno metà del volto principale della foto
+
+llm:
+  qwen25vl-3b:
+    dir: llm
+    model: Qwen2.5-VL-3B-Instruct-Q4_K_M.gguf
+    mmproj: mmproj-Qwen2.5-VL-3B-Instruct-Q8_0.gguf
+    server: runtime/llama
+  qwen3vl-2b:
+    dir: llm
+    model: Qwen3VL-2B-Instruct-Q4_K_M.gguf
+    mmproj: mmproj-Qwen3VL-2B-Instruct-Q8_0.gguf
+    server: runtime/llama

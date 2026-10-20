@@ -1,0 +1,923 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Padova Moto Days 2026 - Motore di Ricerca & Catalogo Vettoriale</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <script src="data.js"></script>
+  <style>
+    :root {
+      --bg: #090d16;
+      --card-bg: rgba(18, 24, 38, 0.75);
+      --card-border: rgba(255, 255, 255, 0.08);
+      --accent: #ff334b;
+      --accent-glow: rgba(255, 51, 75, 0.35);
+      --accent-orange: #ff7a1a;
+      --accent-cyan: #00d2ff;
+      --text: #f0f4fc;
+      --text-muted: #8e9bb0;
+      --glass-blur: blur(14px);
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      background-color: var(--bg);
+      background-image: 
+        radial-gradient(circle at 15% 10%, rgba(255, 51, 75, 0.12) 0%, transparent 40%),
+        radial-gradient(circle at 85% 30%, rgba(255, 122, 26, 0.1) 0%, transparent 45%),
+        radial-gradient(circle at 50% 85%, rgba(0, 210, 255, 0.06) 0%, transparent 50%);
+      color: var(--text);
+      font-family: 'Outfit', -apple-system, BlinkMacSystemFont, sans-serif;
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+
+    /* HEADER */
+    header {
+      padding: 2.2rem 2rem 1.5rem;
+      border-bottom: 1px solid var(--card-border);
+      background: rgba(9, 13, 22, 0.85);
+      backdrop-filter: var(--glass-blur);
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+
+    .header-inner {
+      max-width: 1500px;
+      margin: 0 auto;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1.2rem;
+    }
+
+    .logo-area {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+    }
+
+    .badge-live {
+      background: linear-gradient(135deg, var(--accent), var(--accent-orange));
+      color: #fff;
+      padding: 0.35rem 0.8rem;
+      border-radius: 999px;
+      font-size: 0.75rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      box-shadow: 0 0 15px var(--accent-glow);
+    }
+
+    h1 {
+      font-size: 1.65rem;
+      font-weight: 800;
+      letter-spacing: -0.02em;
+      background: linear-gradient(to right, #ffffff, #d3dcfa);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .header-stats {
+      display: flex;
+      align-items: center;
+      gap: 1.5rem;
+      font-size: 0.85rem;
+      color: var(--text-muted);
+    }
+
+    .stat-pill {
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid var(--card-border);
+      padding: 0.4rem 0.9rem;
+      border-radius: 8px;
+    }
+
+    .stat-pill strong {
+      color: #fff;
+      font-weight: 600;
+    }
+
+    /* SEARCH & FILTER CONTROLS */
+    .controls-container {
+      max-width: 1500px;
+      margin: 1.5rem auto 1rem;
+      padding: 0 2rem;
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+    }
+
+    .search-row {
+      display: flex;
+      gap: 1rem;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+
+    .search-box {
+      flex: 1;
+      min-width: 300px;
+      position: relative;
+    }
+
+    .search-input {
+      width: 100%;
+      background: rgba(18, 24, 38, 0.9);
+      border: 1px solid var(--card-border);
+      padding: 0.85rem 1rem 0.85rem 2.8rem;
+      border-radius: 12px;
+      color: #fff;
+      font-size: 0.95rem;
+      font-family: inherit;
+      outline: none;
+      transition: all 0.2s ease;
+    }
+
+    .search-input:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 15px var(--accent-glow);
+    }
+
+    .search-icon {
+      position: absolute;
+      left: 1rem;
+      top: 50%;
+      transform: translateY(-50%);
+      color: var(--text-muted);
+      pointer-events: none;
+      font-size: 1.1rem;
+    }
+
+    .filter-pills {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      align-items: center;
+    }
+
+    .pill-btn {
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid var(--card-border);
+      color: var(--text-muted);
+      padding: 0.45rem 0.95rem;
+      border-radius: 999px;
+      font-size: 0.82rem;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.18s ease;
+      font-family: inherit;
+    }
+
+    .pill-btn:hover {
+      background: rgba(255, 255, 255, 0.09);
+      color: #fff;
+    }
+
+    .pill-btn.active {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #fff;
+      font-weight: 600;
+      box-shadow: 0 0 12px var(--accent-glow);
+    }
+
+    /* MAIN GALLERY */
+    main {
+      max-width: 1500px;
+      margin: 0 auto;
+      padding: 1rem 2rem 4rem;
+    }
+
+    .results-info {
+      font-size: 0.85rem;
+      color: var(--text-muted);
+      margin-bottom: 1.2rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .photo-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(290px, 1fr));
+      gap: 1.5rem;
+    }
+
+    .photo-card {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 14px;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      transition: transform 0.22s ease, box-shadow 0.22s ease, border-color 0.22s ease;
+      backdrop-filter: var(--glass-blur);
+      position: relative;
+    }
+
+    .photo-card:hover {
+      transform: translateY(-4px);
+      box-shadow: 0 12px 30px rgba(0, 0, 0, 0.5), 0 0 15px rgba(255, 51, 75, 0.15);
+      border-color: rgba(255, 255, 255, 0.2);
+    }
+
+    .card-thumb-wrap {
+      width: 100%;
+      height: 200px;
+      background: #060910;
+      position: relative;
+      cursor: pointer;
+      overflow: hidden;
+    }
+
+    .card-thumb {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      transition: transform 0.35s ease;
+    }
+
+    .photo-card:hover .card-thumb {
+      transform: scale(1.05);
+    }
+
+    .card-badge-cat {
+      position: absolute;
+      top: 0.7rem;
+      left: 0.7rem;
+      background: rgba(9, 13, 22, 0.8);
+      backdrop-filter: blur(8px);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      color: #fff;
+      font-size: 0.7rem;
+      font-weight: 600;
+      padding: 0.25rem 0.6rem;
+      border-radius: 6px;
+    }
+
+    .card-body {
+      padding: 1rem;
+      display: flex;
+      flex-direction: column;
+      flex: 1;
+      gap: 0.6rem;
+    }
+
+    .card-title {
+      font-size: 0.92rem;
+      font-weight: 700;
+      color: #fff;
+      line-height: 1.35;
+      font-family: 'JetBrains Mono', monospace;
+      word-break: break-all;
+    }
+
+    .card-meta {
+      font-size: 0.78rem;
+      color: var(--text-muted);
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.4rem;
+    }
+
+    .tag-chip {
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      padding: 0.18rem 0.5rem;
+      border-radius: 4px;
+      font-size: 0.72rem;
+    }
+
+    .card-desc {
+      font-size: 0.8rem;
+      color: #b0bcd4;
+      line-height: 1.4;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+      flex: 1;
+    }
+
+    .card-actions {
+      display: flex;
+      gap: 0.5rem;
+      margin-top: 0.4rem;
+      padding-top: 0.7rem;
+      border-top: 1px solid rgba(255, 255, 255, 0.05);
+    }
+
+    .btn-action {
+      flex: 1;
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid var(--card-border);
+      color: #fff;
+      padding: 0.45rem;
+      border-radius: 8px;
+      font-size: 0.78rem;
+      font-weight: 600;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.35rem;
+      transition: all 0.18s ease;
+      font-family: inherit;
+    }
+
+    .btn-action:hover {
+      background: rgba(255, 255, 255, 0.12);
+      border-color: rgba(255, 255, 255, 0.3);
+    }
+
+    .btn-action.btn-similar {
+      background: linear-gradient(135deg, rgba(255, 51, 75, 0.25), rgba(255, 122, 26, 0.25));
+      border-color: rgba(255, 51, 75, 0.4);
+      color: #ffb3b8;
+    }
+
+    .btn-action.btn-similar:hover {
+      background: linear-gradient(135deg, rgba(255, 51, 75, 0.45), rgba(255, 122, 26, 0.45));
+      color: #fff;
+      box-shadow: 0 0 12px var(--accent-glow);
+    }
+
+    /* MODAL / DRAWER */
+    .modal-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      background: rgba(4, 7, 13, 0.85);
+      backdrop-filter: blur(10px);
+      z-index: 500;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 1.5rem;
+    }
+
+    .modal-overlay.active {
+      display: flex;
+    }
+
+    .modal-card {
+      background: #0f1523;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 18px;
+      max-width: 1100px;
+      width: 100%;
+      max-height: 92vh;
+      overflow-y: auto;
+      box-shadow: 0 25px 50px rgba(0, 0, 0, 0.7);
+      display: flex;
+      flex-direction: column;
+      position: relative;
+    }
+
+    .modal-header {
+      padding: 1.2rem 1.6rem;
+      border-bottom: 1px solid var(--card-border);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      position: sticky;
+      top: 0;
+      background: #0f1523;
+      z-index: 10;
+    }
+
+    .modal-title {
+      font-size: 1.25rem;
+      font-weight: 700;
+      color: #fff;
+    }
+
+    .btn-close {
+      background: rgba(255, 255, 255, 0.08);
+      border: none;
+      color: #fff;
+      width: 36px;
+      height: 36px;
+      border-radius: 50%;
+      cursor: pointer;
+      font-size: 1.1rem;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: background 0.15s ease;
+    }
+
+    .btn-close:hover {
+      background: rgba(255, 51, 75, 0.3);
+    }
+
+    .modal-content {
+      padding: 1.6rem;
+      display: flex;
+      flex-direction: column;
+      gap: 1.8rem;
+    }
+
+    /* CURRENT PHOTO DETAIL */
+    .photo-hero {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1.5rem;
+      background: rgba(18, 24, 38, 0.5);
+      border: 1px solid var(--card-border);
+      border-radius: 14px;
+      padding: 1.2rem;
+    }
+
+    @media (max-width: 800px) {
+      .photo-hero {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .hero-img-wrap {
+      border-radius: 10px;
+      overflow: hidden;
+      background: #060910;
+      max-height: 350px;
+    }
+
+    .hero-img-wrap img {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+    }
+
+    .hero-details {
+      display: flex;
+      flex-direction: column;
+      gap: 0.8rem;
+    }
+
+    .hero-title {
+      font-size: 1.05rem;
+      font-weight: 700;
+      font-family: 'JetBrains Mono', monospace;
+      color: #fff;
+      word-break: break-all;
+    }
+
+    .path-box {
+      background: rgba(0, 0, 0, 0.4);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 8px;
+      padding: 0.6rem 0.8rem;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.75rem;
+      color: #79d2f6;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .btn-copy-path {
+      background: rgba(255, 255, 255, 0.1);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      color: #fff;
+      padding: 0.25rem 0.55rem;
+      border-radius: 5px;
+      font-size: 0.7rem;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+
+    .btn-copy-path:hover {
+      background: var(--accent);
+    }
+
+    .meta-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0.6rem;
+      font-size: 0.8rem;
+    }
+
+    .meta-item {
+      background: rgba(255, 255, 255, 0.03);
+      padding: 0.4rem 0.6rem;
+      border-radius: 6px;
+    }
+
+    .meta-item span {
+      color: var(--text-muted);
+      display: block;
+      font-size: 0.7rem;
+    }
+
+    .meta-item strong {
+      color: #fff;
+    }
+
+    /* SIMILAR SECTION */
+    .similar-section {
+      display: flex;
+      flex-direction: column;
+      gap: 1.2rem;
+    }
+
+    .section-title {
+      font-size: 1.15rem;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+    }
+
+    .similar-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(310px, 1fr));
+      gap: 1.2rem;
+    }
+
+    .similar-card {
+      background: rgba(24, 32, 50, 0.6);
+      border: 1px solid var(--card-border);
+      border-radius: 12px;
+      padding: 0.9rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.8rem;
+      transition: border-color 0.18s ease;
+    }
+
+    .similar-card:hover {
+      border-color: rgba(255, 51, 75, 0.4);
+    }
+
+    .sim-header {
+      display: flex;
+      gap: 0.8rem;
+      align-items: center;
+    }
+
+    .sim-thumb {
+      width: 75px;
+      height: 60px;
+      border-radius: 6px;
+      object-fit: cover;
+      background: #000;
+      flex-shrink: 0;
+      cursor: pointer;
+    }
+
+    .sim-info {
+      flex: 1;
+      overflow: hidden;
+    }
+
+    .sim-name {
+      font-size: 0.78rem;
+      font-weight: 700;
+      font-family: 'JetBrains Mono', monospace;
+      color: #fff;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .score-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.3rem;
+      background: linear-gradient(135deg, rgba(255, 51, 75, 0.2), rgba(255, 122, 26, 0.2));
+      border: 1px solid rgba(255, 51, 75, 0.4);
+      color: #ff9da4;
+      padding: 0.2rem 0.5rem;
+      border-radius: 999px;
+      font-size: 0.75rem;
+      font-weight: 700;
+      margin-top: 0.25rem;
+    }
+
+    /* REASONS BREAKDOWN */
+    .reasons-box {
+      background: rgba(0, 0, 0, 0.3);
+      border: 1px solid rgba(255, 255, 255, 0.05);
+      border-radius: 8px;
+      padding: 0.65rem 0.8rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.45rem;
+      font-size: 0.77rem;
+    }
+
+    .reason-row {
+      display: flex;
+      gap: 0.5rem;
+      line-height: 1.35;
+    }
+
+    .reason-label {
+      color: #ff9da4;
+      font-weight: 600;
+      flex-shrink: 0;
+      min-width: 95px;
+    }
+
+    .reason-val {
+      color: #cbd5e1;
+    }
+
+    .btn-sim-open {
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid var(--card-border);
+      color: #fff;
+      padding: 0.35rem;
+      border-radius: 6px;
+      font-size: 0.75rem;
+      cursor: pointer;
+      text-align: center;
+      transition: all 0.15s ease;
+    }
+
+    .btn-sim-open:hover {
+      background: var(--accent);
+      border-color: var(--accent);
+    }
+  </style>
+</head>
+<body>
+
+  <!-- HEADER -->
+  <header>
+    <div class="header-inner">
+      <div class="logo-area">
+        <span class="badge-live">Motore Attivo</span>
+        <div>
+          <h1>Padova Moto Days 2026</h1>
+          <p style="font-size:0.8rem; color:var(--text-muted);">Dispositivo di Ricerca Vettoriale & Catalogazione Fotografica</p>
+        </div>
+      </div>
+      <div class="header-stats">
+        <div class="stat-pill"><strong id="stat-count">334</strong> Foto Catalogate</div>
+        <div class="stat-pill"><strong>SQLite</strong> padova_moto_days.db</div>
+        <div class="stat-pill"><strong>ONNX</strong> Deep Visual Vectors</div>
+      </div>
+    </div>
+  </header>
+
+  <!-- CONTROLS -->
+  <div class="controls-container">
+    <div class="search-row">
+      <div class="search-box">
+        <span class="search-icon">🔍</span>
+        <input type="text" id="searchInput" class="search-input" placeholder="Cerca per modello (es. Ferrari, Ducati, Vespa, 720S), colore, ruota, stand...">
+      </div>
+      <div class="stat-pill" style="align-self:stretch; display:flex; align-items:center;">
+        <span id="filtered-count" style="font-size:0.85rem; font-weight:600; color:#fff;">334 foto mostrate</span>
+      </div>
+    </div>
+
+    <!-- CATEGORY PILLS -->
+    <div class="filter-pills" id="categoryPills">
+      <button class="pill-btn active" data-cat="ALL">Tutte le foto (334)</button>
+      <button class="pill-btn" data-cat="Supercar">🏎️ Supercar (Ferrari, McLaren)</button>
+      <button class="pill-btn" data-cat="Moto Sportiva">🏍️ Moto Sportive (Ducati, MV)</button>
+      <button class="pill-btn" data-cat="Vespa & Scooter Epoca">🛵 Vespa & Scooter</button>
+      <button class="pill-btn" data-cat="Moto d'Epoca">🕰️ Moto d'Epoca & Guzzi</button>
+      <button class="pill-btn" data-cat="Dettaglio Tecnico">⚙️ Dettagli Ruote & Freni</button>
+      <button class="pill-btn" data-cat="Inaugurazione Ufficiale">✂️ Taglio Nastro & Sindaco</button>
+      <button class="pill-btn" data-cat="Premiazione Ufficiale & Stage">🏆 Premiazioni Palco</button>
+      <button class="pill-btn" data-cat="Lego & Modellismo">🧱 Lego & Stand Bimbi</button>
+      <button class="pill-btn" data-cat="Modella & Taxi Storico">🇬🇧 Modella & London Cab</button>
+    </div>
+  </div>
+
+  <!-- GALLERY -->
+  <main>
+    <div class="photo-grid" id="photoGrid">
+      <!-- Generated dynamically -->
+    </div>
+  </main>
+
+  <!-- DETAIL & SIMILARITY MODAL -->
+  <div class="modal-overlay" id="detailModal">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h2 class="modal-title" id="modalHeading">Dettagli Foto & Ricerca Similarità</h2>
+        <button class="btn-close" id="btnCloseModal">✕</button>
+      </div>
+      <div class="modal-content" id="modalBody">
+        <!-- Injected via JavaScript -->
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // State
+    const photos = window.CATALOG_DATA || [];
+    const similarities = window.SIMILARITY_DATA || {};
+    let currentCategory = 'ALL';
+    let searchQuery = '';
+
+    const photoGrid = document.getElementById('photoGrid');
+    const searchInput = document.getElementById('searchInput');
+    const categoryPills = document.getElementById('categoryPills');
+    const filteredCount = document.getElementById('filtered-count');
+    const detailModal = document.getElementById('detailModal');
+    const btnCloseModal = document.getElementById('btnCloseModal');
+    const modalBody = document.getElementById('modalBody');
+
+    // Render Cards
+    function renderGallery() {
+      const q = searchQuery.toLowerCase().trim();
+      const filtered = photos.filter(p => {
+        // category filter
+        const matchCat = (currentCategory === 'ALL') || (p.category === currentCategory);
+        if (!matchCat) return false;
+
+        // search query filter
+        if (!q) return true;
+        const haystack = `${p.new_name} ${p.brand} ${p.model} ${p.category} ${p.primary_colors} ${p.description} ${p.tags}`.toLowerCase();
+        return haystack.includes(q);
+      });
+
+      filteredCount.textContent = `${filtered.length} foto mostrate`;
+
+      if (filtered.length === 0) {
+        photoGrid.innerHTML = `
+          <div style="grid-column: 1/-1; text-align:center; padding: 4rem 1rem; color:var(--text-muted);">
+            <div style="font-size:2.5rem; margin-bottom:0.5rem;">🔍</div>
+            <h3>Nessuna foto trovata per i criteri selezionati</h3>
+            <p style="margin-top:0.3rem;">Prova a modificare il termine di ricerca o rimuovere i filtri.</p>
+          </div>
+        `;
+        return;
+      }
+
+      photoGrid.innerHTML = filtered.map(p => {
+        const thumbSrc = `thumbnails/${p.new_name}`;
+        return `
+          <div class="photo-card" data-filename="${p.new_name}">
+            <div class="card-thumb-wrap" onclick="openPhotoDetail('${p.new_name}')">
+              <img class="card-thumb" src="${thumbSrc}" alt="${p.new_name}" loading="lazy">
+              <span class="card-badge-cat">${p.category}</span>
+            </div>
+            <div class="card-body">
+              <div class="card-title">${p.new_name}</div>
+              <div class="card-meta">
+                <span class="tag-chip">🏷️ ${p.brand || 'PMD'}</span>
+                <span class="tag-chip">🎨 ${p.primary_colors || 'Colore'}</span>
+                <span class="tag-chip">📐 ${p.shot_type || 'Scatto'}</span>
+              </div>
+              <p class="card-desc">${p.description}</p>
+              <div class="card-actions">
+                <button class="btn-action btn-similar" onclick="openPhotoDetail('${p.new_name}')">
+                  🔍 Trova Simili & Perché
+                </button>
+                <button class="btn-action" onclick="copyPath('${p.absolute_path}')" title="Copia percorso file">
+                  📋 Path
+                </button>
+              </div>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    // Modal Details & Similarity View
+    window.openPhotoDetail = function(new_name) {
+      const p = photos.find(x => x.new_name === new_name);
+      if (!p) return;
+
+      const topSims = similarities[new_name] || [];
+      const thumbSrc = `thumbnails/${p.new_name}`;
+
+      modalBody.innerHTML = `
+        <div class="photo-hero">
+          <div class="hero-img-wrap">
+            <img src="${thumbSrc}" alt="${p.new_name}">
+          </div>
+          <div class="hero-details">
+            <div class="hero-title">${p.new_name}</div>
+            
+            <div class="path-box">
+              <span style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${p.absolute_path}</span>
+              <button class="btn-copy-path" onclick="copyPath('${p.absolute_path}')">Copia Path</button>
+            </div>
+
+            <p style="font-size:0.85rem; line-height:1.45; color:#cbd5e1;">${p.description}</p>
+
+            <div class="meta-grid">
+              <div class="meta-item"><span>Marchio / Soggetto</span><strong>${p.brand} ${p.model}</strong></div>
+              <div class="meta-item"><span>Categoria</span><strong>${p.category}</strong></div>
+              <div class="meta-item"><span>Inquadratura</span><strong>${p.shot_type}</strong></div>
+              <div class="meta-item"><span>Palette Colori</span><strong>${p.primary_colors}</strong></div>
+              <div class="meta-item"><span>Nome Originale</span><strong style="font-size:0.75rem;">${p.original_name}</strong></div>
+              <div class="meta-item"><span>Risoluzione</span><strong>${p.width} × ${p.height} px</strong></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- SIMILARITY SECTION -->
+        <div class="similar-section">
+          <div class="section-title">
+            <span>⚡ Foto Più Simili (Vettorizzate con Spiegazione "Perché")</span>
+          </div>
+
+          <div class="similar-grid">
+            ${topSims.map(sim => {
+              const simPhoto = photos.find(x => x.new_name === sim.target_name) || {};
+              const simThumb = `thumbnails/${sim.target_name}`;
+              const r = sim.reasons || {};
+
+              return `
+                <div class="similar-card">
+                  <div class="sim-header">
+                    <img class="sim-thumb" src="${simThumb}" alt="${sim.target_name}" onclick="openPhotoDetail('${sim.target_name}')">
+                    <div class="sim-info">
+                      <div class="sim-name" title="${sim.target_name}">${sim.target_name}</div>
+                      <div style="font-size:0.72rem; color:var(--text-muted);">${simPhoto.category || ''}</div>
+                      <span class="score-badge">Affinità: ${sim.score_pct}%</span>
+                    </div>
+                  </div>
+
+                  <div class="reasons-box">
+                    <div class="reason-row">
+                      <span class="reason-label">🏷️ Soggetto:</span>
+                      <span class="reason-val">${r.soggetto || 'Veicolo affine'}</span>
+                    </div>
+                    <div class="reason-row">
+                      <span class="reason-label">📐 Inquadratura:</span>
+                      <span class="reason-val">${r.inquadratura || 'Composizione analoga'}</span>
+                    </div>
+                    <div class="reason-row">
+                      <span class="reason-label">🎨 Palette:</span>
+                      <span class="reason-val">${r.palette || 'Tonalità condivise'}</span>
+                    </div>
+                    <div class="reason-row">
+                      <span class="reason-label">📍 Contesto:</span>
+                      <span class="reason-val">${r.contesto || 'Area evento'}</span>
+                    </div>
+                  </div>
+
+                  <button class="btn-sim-open" onclick="openPhotoDetail('${sim.target_name}')">
+                    Apri questa foto ➔
+                  </button>
+                </div>
+              `;
+            }).join('')}
+          </div>
+        </div>
+      `;
+
+      detailModal.classList.add('active');
+    };
+
+    // Close Modal
+    btnCloseModal.addEventListener('click', () => {
+      detailModal.classList.remove('active');
+    });
+    detailModal.addEventListener('click', (e) => {
+      if (e.target === detailModal) detailModal.classList.remove('active');
+    });
+
+    // Copy path helper
+    window.copyPath = function(pathStr) {
+      navigator.clipboard.writeText(pathStr).then(() => {
+        alert("Percorso copiato negli appunti:\n" + pathStr);
+      }).catch(() => {
+        prompt("Copia il path del file:", pathStr);
+      });
+    };
+
+    // Event Listeners
+    searchInput.addEventListener('input', (e) => {
+      searchQuery = e.target.value;
+      renderGallery();
+    });
+
+    categoryPills.addEventListener('click', (e) => {
+      const btn = e.target.closest('.pill-btn');
+      if (!btn) return;
+
+      document.querySelectorAll('.pill-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      currentCategory = btn.dataset.cat;
+      renderGallery();
+    });
+
+    // Initial render
+    renderGallery();
+  </script>
+</body>
+</html>

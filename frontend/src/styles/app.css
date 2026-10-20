@@ -1,0 +1,74 @@
+/* Mosaic · stili globali. I token vengono da styles/tokens (palette generata dai colori del logo, vedi scripts/build-palette.mjs). */
+
+/* Font: Outfit e IBM Plex Mono, serviti in locale (Gilroy è un font commerciale e non si copia). */
+:root {
+  --font-ui: "Outfit", system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --font-display: var(--font-ui);
+  --font-sans: var(--font-ui);
+  /* token usati dai componenti */
+  --weight-bold: 700;
+  --weight-brand: 800;
+  --danger-text: var(--deviates-fg);
+}
+
+html, body, #app { height: 100%; }
+body { overflow: hidden; }
+#app { position: relative; overflow: clip; }
+
+.skip-link {
+  position: fixed;
+  top: var(--space-2);
+  left: var(--space-2);
+  z-index: var(--z-toast);
+  padding: var(--space-2) var(--space-3);
+  background: var(--bg-inverse);
+  color: var(--fg-inverse);
+  border-radius: var(--radius-control);
+  transform: translateY(-200%);
+}
+.skip-link:focus { transform: none; }
+
+/* Solo dissolvenza nel cambio pagina: scala e traslazioni frazionarie fanno tremare il testo. */
+.page-enter { animation: page-in var(--dur-base) var(--ease-out) backwards; }
+
+@keyframes page-in { from { opacity: 0; } }
+@keyframes fade-in { from { opacity: 0; } }
+@keyframes spin { to { transform: rotate(360deg); } }
+@keyframes shimmer { from { background-position: 100% 0; } to { background-position: 0 0; } }
+@keyframes pulse-dot { 50% { opacity: 0.35; } }
+@keyframes dialog-in { from { opacity: 0; transform: scale(0.7); } }
+@keyframes dialog-out { to { opacity: 0; transform: scale(0.9); } }
+@keyframes drawer-in { from { transform: translateX(-100%); } }
+@keyframes drawer-in-right { from { transform: translateX(100%); } }
+@keyframes pop-in { from { opacity: 0; transform: translateY(calc(var(--pop-dir, 1) * -4px)) scale(0.85); } }
+@keyframes toast-in { from { opacity: 0; transform: translateY(var(--space-3)) scale(0.92); } }
+@keyframes tip-in { from { opacity: 0; transform: translateY(2px) scale(0.95); } }
+
+.spin { animation: spin 0.9s linear infinite; }
+
+/* Cambio tema: una sola dissolvenza della pagina, senza lampeggi del testo */
+::view-transition-old(root), ::view-transition-new(root) {
+  animation-duration: 450ms;
+  animation-timing-function: cubic-bezier(0.45, 0, 0.25, 1);
+}
+:root[data-theme-fade], :root[data-theme-fade] * { transition: none !important; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+  }
+  ::view-transition-old(root), ::view-transition-new(root) { animation: none; }
+}
+
+.muted { color: var(--fg-muted); }
+.subtle { color: var(--fg-subtle); }
+.mono { font-family: var(--font-mono); }
+.row { display: flex; align-items: center; gap: var(--space-2); }
+.grow { flex: 1; min-width: 0; }
+.stack { display: flex; flex-direction: column; gap: var(--space-3); }
+.truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Barra di scorrimento discreta */
+* { scrollbar-width: thin; scrollbar-color: var(--border-strong) transparent; }

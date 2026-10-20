@@ -1,0 +1,95 @@
+/*
+ * Mosaic · token semantici (livello 2 di 3).
+ *
+ * Regole, verificate da scripts/lint-tokens.mjs:
+ *  - ogni colore è `light-dark(var(--primitivo), var(--primitivo))`, `var(--altro-semantico)` o un nero/bianco neutro;
+ *  - i colori vengono dalle scale di palettes.css, generate dai colori del logo;
+ *  - i componenti usano SOLO questi token, mai i primitivi;
+ *  - le coppie testo/sfondo rispettano il contrasto WCAG (controllo `lintContrast`).
+ */
+
+:root {
+  color-scheme: light dark;
+
+  /* Superfici dell'interfaccia (neutri blu notte, dalla piastra del logo) */
+  --bg-canvas:   light-dark(var(--neutral-50),  var(--neutral-1000));
+  --bg-surface:  light-dark(var(--neutral-0),   var(--neutral-950));
+  --bg-sidebar:  light-dark(var(--neutral-100), var(--neutral-975));
+  --bg-sunken:   light-dark(var(--neutral-100), var(--neutral-1000));
+  --bg-raised:   light-dark(var(--neutral-0),   var(--neutral-900));
+  --bg-hover:    light-dark(var(--neutral-100), var(--neutral-900));
+  --bg-selected: light-dark(var(--brand-50),    var(--brand-950));
+  --bg-inverse:  light-dark(var(--neutral-950), var(--neutral-50));
+
+  /* Dietro le foto: grigi senza tinta, per non falsare i colori */
+  --stage-bg:     light-dark(var(--stage-200), var(--stage-1000));
+  --stage-cell:   light-dark(var(--stage-100), var(--stage-900));
+  --stage-border: light-dark(var(--stage-200), var(--stage-800));
+
+  /* Testo */
+  --fg-default:   light-dark(var(--neutral-950), var(--neutral-50));
+  --fg-muted:     light-dark(var(--neutral-700), var(--neutral-300));
+  --fg-subtle:    light-dark(var(--neutral-600), var(--neutral-400));
+  --fg-inverse:   light-dark(var(--neutral-50),  var(--neutral-950));
+  --fg-on-accent: light-dark(var(--neutral-0),   var(--neutral-1000));
+
+  /* Campi di ricerca sempre chiari, anche nel tema scuro */
+  --bg-field-white:     var(--neutral-0);
+  --fg-on-white:        var(--neutral-950);
+  --fg-subtle-on-white: var(--neutral-600);
+
+  /* Bordi */
+  --border-subtle:  light-dark(var(--neutral-100), var(--neutral-900));
+  --border-default: light-dark(var(--neutral-200), var(--neutral-800));
+  --border-strong:  light-dark(var(--neutral-500), var(--neutral-500));
+  --border-focus:   light-dark(var(--brand-500),   var(--brand-400));
+
+  /* Accento (azioni primarie, selezione, collegamenti): il rosso del logo */
+  --accent:         light-dark(var(--brand-600), var(--brand-500));
+  --accent-hover:   light-dark(var(--brand-700), var(--brand-400));
+  --accent-soft:    light-dark(var(--brand-100), var(--brand-900));
+  --accent-soft-fg: light-dark(var(--brand-800), var(--brand-100));
+  --accent-text:    light-dark(var(--brand-700), var(--brand-300));
+
+  /* Esiti: riuscito (verde), da rivedere (giallo), errore (arancio), informazione (ciano) */
+  --match-fg:     light-dark(var(--match-700), var(--match-200));
+  --match-bg:     light-dark(var(--match-100), var(--match-950));
+  --match-border: light-dark(var(--match-300), var(--match-800));
+  --match-solid:  light-dark(var(--match-600), var(--match-400));
+
+  --to-verify-fg:     light-dark(var(--to_verify-800), var(--to_verify-200));
+  --to-verify-bg:     light-dark(var(--to_verify-100), var(--to_verify-950));
+  --to-verify-border: light-dark(var(--to_verify-300), var(--to_verify-800));
+  --to-verify-solid:  light-dark(var(--to_verify-600), var(--to_verify-400));
+
+  --deviates-fg:     light-dark(var(--deviates-700), var(--deviates-200));
+  --deviates-bg:     light-dark(var(--deviates-100), var(--deviates-950));
+  --deviates-border: light-dark(var(--deviates-300), var(--deviates-800));
+  --deviates-solid:  light-dark(var(--deviates-600), var(--deviates-400));
+
+  --alternative-fg:     light-dark(var(--alternative-700), var(--alternative-200));
+  --alternative-bg:     light-dark(var(--alternative-100), var(--alternative-950));
+  --alternative-border: light-dark(var(--alternative-300), var(--alternative-800));
+  --alternative-solid:  light-dark(var(--alternative-600), var(--alternative-400));
+
+  /* Sopra le foto: uguali in chiaro e in scuro, perché lo sfondo è la foto e non il tema */
+  --overlay-scrim:    oklch(0% 0 0 / 0.62);
+  --overlay-fg:       var(--stage-0);
+  --overlay-gradient: linear-gradient(to top, oklch(0% 0 0 / 0.72), oklch(0% 0 0 / 0));
+  --overlay-shadow:   oklch(0% 0 0 / 0.5);
+
+  /* Sfondo del visore a tutto schermo: nero (predefinito) o grigio 18% */
+  --viewer-bg: oklch(0% 0 0);
+
+  /* Trasparenze neutre */
+  --scrim:        oklch(0% 0 0 / 0.42);
+  --shadow-color: oklch(0% 0 0 / 0.10);
+  --highlight:    oklch(from var(--accent) l c h / 0.14);
+  --progress-sheen: oklch(100% 0 0 / 0.35);
+  --drop-veil:   oklch(from var(--accent) l c h / 0.10);
+}
+
+:root[data-viewer="grey"] { --viewer-bg: oklch(57% 0 0); }
+
+:root[data-theme="light"] { color-scheme: light; }
+:root[data-theme="dark"]  { color-scheme: dark; }

@@ -1,0 +1,269 @@
+# Decisioni di progetto (DECISIONS)
+
+Questo documento segue il metodo REA, che chiede di separare il **comportamento osservato** nei sorgenti dalle **scelte di progetto** per Mosaic 2. Per ogni decisione indica:
+- **Osservato:** cosa fanno oggi il vecchio Mosaic o PhotoPrism, verificato leggendo il codice. Nessuna delle due app è stata eseguita.
+- **Scelta:** cosa fa Mosaic 2.
+- **Perché:** la motivazione.
+
+Le decisioni marcate **[utente]** le ha prese l'utente il 18/10/2026; le altre sono proposte tecniche e si possono rivedere.
+
+---
+
+## D-01 Stack: Python + Vue 3 [utente]
+- **Osservato.** Il vecchio Mosaic è Python 3.14 con onnxruntime, numpy e Pillow, più una pagina HTML statica. PhotoPrism è Go + Vue 3/Vuetify ed è pensato per Docker.
+- **Scelta.**
+  - Backend: Python 3.14 (FastAPI, SQLite, ONNX Runtime, OpenCV).
+  - Frontend: Vue 3 + Vite, compilato in `frontend/dist`.
+  - Un solo processo locale su `127.0.0.1:8000`.
+- **Perché.** Riusa l'ambiente già installato. ONNX su Python/Windows è solido. A runtime non serve Node.
+
+## D-02 Niente Docker [utente]
+- **Osservato.** PhotoPrism richiede MariaDB e dipendenze native (libvips, TensorFlow, ffmpeg, exiftool), che di norma arrivano con Docker.
+- **Scelta.**
+  - Ambiente Python in `.venv`.
+  - Binari portabili (exiftool 13.59, ffmpeg 9.0.2 essentials, llama.cpp b11721 CPU x64) in `runtime/`.
+  - Modelli in `models/`.
+  - Tutto descritto in `assets.yaml` e verificato con SHA-256 (`mosaic/assets.py`).
+- **Perché.** Così il software gira completamente in locale e si installa ripetibilmente con un solo comando.
+
+## D-03 Motore di embedding: SigLIP 2 multilingue [utente]
+- **Osservato.**
+  - Il vecchio Mosaic usa come "embedding" le probabilità delle 1000 classi di MobileNetV2 (`_legacy/algoritmi/03_extract_features.py:84-90`): due foto si somigliano se condividono classi ImageNet.
+  - PhotoPrism non ha nessun embedding semantico per immagine: ha solo vettori dei volti e classificazione a etichette.
+- **Scelta.** `onnx-community/siglip2-base-patch16-224-ONNX`, versioni INT8: `vision_model_int8.onnx` da 95 MB e `text_model_int8.onnx` da 283 MB, tokenizer Gemma (`tokenizer.json`). Un solo spazio vettoriale (768 dimensioni, L2) serve per:
+  - foto simili;
+  - ricerca testo→foto in italiano;
+  - etichette zero-shot;
+  - NSFW;
+  - quasi-duplicati.
+- **Perché.** Un modello solo copre quattro funzioni che PhotoPrism risolve con modelli diversi. Essendo multilingue, le ricerche in italiano funzionano senza traduzione. L'INT8 tiene la RAM sotto 1 GB su un PC con 8 GB.
+- **Da verificare in fase 3.**
+  - Preprocessing (resize 224, mean/std 0,5) e lunghezza del testo (64 token, padding `max_length`), contro `preprocessor_config.json`.
+  - Confronto con il riferimento su 5 immagini.
+
+## D-04 Etichette zero-shot al posto delle regole sui numeri dei file
+- **Osservato.**
+  - `_legacy/algoritmi/04_build_catalog.py:19-366` assegna categoria, marca, modello e descrizione in base al **numero nel nome del file** (es. 1-24 = Ducati). Il risultato vale solo per quel set di 334 foto.
+  - PhotoPrism usa un classificatore ImageNet (EfficientFormerV2) e mappa le classi con `rules.yml`.
+- **Scelta.**
+  - Vocabolario `models/labels_it.yaml`: etichetta, prompt it/en, categoria, soglia per etichetta, priorità.
+  - Punteggio = similarità tra immagine e prompt di testo SigLIP 2.
+  - Soglia globale 20%, massimo 5 etichette (valori di PhotoPrism), fonte `onnx` (12).
+- **Perché.** Funziona su qualsiasi foto, il vocabolario si estende senza riaddestrare, e include il dominio di Mosaic (moto, marche, palco, stand).
+- **Conseguenza.** Le descrizioni curate a mano del vecchio catalogo si recuperano con la migrazione (D-12), non con le regole.
+
+## D-05 Volti: YuNet + ArcFace (w600k_r50), soglie tarate sui dati dell'utente [utente]
+- **Osservato.** Nel vecchio Mosaic non c'è nulla sui volti. PhotoPrism usa per default YuNet ONNX e SFace, con DBSCAN e i valori della tabella in `internal/ai/face/README.md`.
+- **Scelta iniziale.** `cv2.FaceDetectorYN` (YuNet `2023mar`, 0,2 MB) e `cv2.FaceRecognizerSF` (SFace `2021dec`, 39 MB) con le costanti di PhotoPrism: ClusterDist 0,72, ClusterRadius 0,70, MatchDist 0,25, core 5 poi retry a 4, dimensione per il clustering 112 px, punteggio 85, margine 0,01, ri-clustering ×0,95 per al massimo 6 round.
+- **Misurato (19 ott 2026, `data/mosaic.db`, 202 foto).** 382 volti rilevati, solo 90 in un cluster (7 cluster); 197 volti grandi (≥112 px, punteggio ≥85) senza cluster, quindi invisibili nella pagina Persone. Sui 92 volti con un nome (9 persone) SFace dà, per la stessa persona, distanza mediana 0,89 e 95° percentile 1,07; per persone diverse il 1° percentile è 1,14. Con `cluster_dist` 0,72 si accettava il 12% delle coppie giuste. Chi aveva un solo volto nominato (elettra, ettore) non si propagava mai.
+- **Riconoscitore: ArcFace `w600k_r50`** (InsightFace buffalo_l, 174 MB, repo `public-data/insightface`; **licenza solo per uso non commerciale**, accettata per l'uso personale). Gira su ONNX Runtime tramite `ctx.service("onnx")`, quindi `release_models` lo libera prima dell'LLM. Allineamento `align_112` (`estimateAffinePartial2D` sul modello di riferimento a 5 punti; coincide con `alignCrop` di OpenCV, differenza media 0,0002 su 255), un batch N×3×112×112 per foto. `RecognizerSpec` ha i campi `engine` (predefinito `sface`), `input_size` e `flip`.
+- **Taratura (`scripts/face_eval.py --compare`, solo nomi dati dall'utente).**
+
+  | | SFace | ArcFace | ArcFace + flip |
+  |---|---|---|---|
+  | stessa persona, mediana / 95° perc. | 0,89 / 1,07 | 0,87 / 1,04 | 0,85 / 1,01 |
+  | persone diverse, 1° percentile | 1,14 | 1,28 | 1,26 |
+  | TAR a FAR 0,1% | 96,5% | 100% | 100% |
+  | TAR a FAR 1% | 99,2% | 100% | 100% |
+
+  ArcFace separa meglio e il flip non aiuta (e costa il doppio): `flip: false`. Distanza massima tra volti della stessa persona 1,14, minima tra persone diverse 1,23. Soglie scelte con margine rispetto ai 9 soggetti misurati: `cluster_dist` 1,05 (TAR 96%, FAR 0), `cluster_radius` 0,90, `match_dist` 1,10 (TAR 99%, FAR 0), `max_match_dist` 1,20, `match_margin` 0,05.
+- **Logica.**
+  - `cluster_core` 3 e `cluster_core_retry` 2: in 200 foto una persona compare 2-10 volte. I volti di profilo (`frontal`: scostamento del naso dagli occhi > 0,35 della distanza tra gli occhi) non fondano cluster, ma si riconoscono.
+  - Il margine oltre il raggio nel match dei cluster diventa `cluster_slack` (0,25); `match_dist` e `max_match_dist` valgono ora per il passo `_step_subjects`, perché con ArcFace la soglia sui volti nominati (1,10) è molto più larga di quella per entrare in un cluster.
+  - `_step_subjects`: per i volti senza cluster né nome, distanza dalle persone con volti nominati dall'utente (k-NN, k = min(3, n)). Sotto `match_dist` e con vantaggio `match_margin` sulla seconda persona il nome si assegna da solo; fino a `max_match_dist` resta un suggerimento (`markers.sugg_subj_id`, `sugg_dist`, `sugg_rejected`). Una persona già presente nella foto non si propone per un altro volto. Solo i nomi manuali fanno da riferimento: niente deriva.
+  - `_step_unique_per_photo`: la stessa persona compare una volta per foto; resta il nome manuale, altrimenti il volto più vicino. I nomi manuali non si toccano.
+  - Un nome è «manuale» se `markers.src ≥ 64` (`sources.MANUAL`): `name_face`, `name_marker` e `confirm_suggestion` lo impostano. La migrazione 2 del DB tratta come confermati tutti i nomi già presenti.
+  - Cambio di modello: `reembed_markers` (chiamata da `h_faces`) ricalcola gli embedding da `fit_1920`, conserva `subj_id` e `name`, azzera il cluster e cancella i cluster del modello precedente.
+- **Risultato sul DB reale.** Volti grandi senza cluster: da 197 a 38 (35 senza nome); in un cluster: da 90 a 271 su 382; 27 cluster, nessuno con due persone diverse; 52 volti nominati in automatico (controllo a vista su un foglio di ritagli: coerenti) e 4 suggerimenti da confermare, tutti di profilo o scuri.
+- **Perché.** ArcFace ha una separazione maggiore di SFace sugli stessi ritagli, e con soglie tarate sui dati reali i volti non vanno più persi. Le strategie di PhotoPrism si reimplementano senza copiare codice AGPL (vedi D-14).
+- **Cautela.** La taratura usa 9 persone e 92 volti, tutti nominati a partire dai cluster SFace: favorisce SFace, quindi il vantaggio di ArcFace è prudente. Le soglie vanno riviste se la libreria cresce molto o contiene persone molto somiglianti.
+
+## D-06 LLM locale incluso nell'installazione [utente]
+- **Osservato.** PhotoPrism delega didascalie ed etichette LLM a Ollama o OpenAI (`internal/ai/vision`). Nel vecchio Mosaic le descrizioni sono scritte a mano.
+- **Scelta.**
+  - `llama-server.exe` di llama.cpp (build `b11721`, `win-cpu-x64`, 19,7 MB), avviato da Mosaic come sottoprocesso su `127.0.0.1`, con l'API compatibile OpenAI.
+  - Modello **Qwen2.5-VL-3B-Instruct Q4_K_M** (1,93 GB) + `mmproj` Q8_0 (845 MB), di `ggml-org`.
+  - Avvio su richiesta, spegnimento dopo 5 minuti di inattività, mai in parallelo con SigLIP.
+- **Perché.** Nessun programma da installare a parte. Qwen2.5-VL è buono in italiano e sta in circa 3 GB di RAM. La build CPU evita problemi con la MX130 da 2 GB.
+- **Alternativa nel registro.** Gemma 3 4B Q4_K_M (2,49 GB + mmproj 851 MB).
+- **Costo atteso.** Circa 20-60 s per foto su CPU, quindi gira in background in modalità `newly-indexed`.
+- **Misurato (19 ott 2026, i7-10510U, 8 GB).** Circa 100 s per foto con fit_720 e 7 thread: 202 foto sarebbero state 5-6 ore. In più, `llama-server` si era chiuso senza lasciare traccia e ogni foto successiva era stata contata come fallita (32 `ConnectError` in 4 minuti).
+- **Accelerazioni adottate.**
+  - Immagine ridotta a 448 px (`llm.image_size`): da circa 500 a circa 150-190 token visivi.
+  - Thread = core fisici, con `-tb`.
+  - Uscita vincolata da uno schema JSON (`response_format`), `max_tokens` 200, contesto 2048.
+  - Tempo stimato nell'avanzamento del job.
+- **Robustezza.** Il log di `llama-server` va in `data/llama-server.log`. Se il processo si chiude, `caption_photos` lo riavvia una volta e riprova la stessa foto; alla seconda chiusura il job si ferma con un messaggio che rimanda al log, senza segnare le altre foto come fallite.
+- **Nomi nelle didascalie.** Il prompt riceve solo i nomi delle persone confermate (mai i suggerimenti), da sinistra a destra.
+- **Alternativa leggera registrata.** `qwen3vl-2b` (Qwen3-VL-2B Q4_K_M 1,1 GB + mmproj Q8_0 445 MB, Apache-2.0). Si adotta solo dopo `scripts/bench_captions.py`, se l'italiano resta buono.
+- **Misurato di nuovo (19 ott 2026, sera).** Con Qwen2.5-VL 3B: 65-90 s per foto, di cui 50-75 s nella fase prompt (immagine) e solo 12-16 s nella risposta. Causa: la RAM. Con IDE e Claude aperti restavano 0,5 GB liberi, llama-server teneva in memoria 673 MB dei 2,8 GB del modello, che veniva riletto dal disco di continuo; a metà benchmark il server si è chiuso.
+- **Adottato `qwen3vl-2b` come predefinito.** Benchmark su 8 foto (`data/bench/captions_2b*.md`):
+
+  | Variante | s/foto | Prompt | Risposta | RAM di picco |
+  |---|---|---|---|---|
+  | 2B @448, 1 richiesta | 17,1 | 10,8 s | 6,0 s | 2,8 GB |
+  | 2B @384, 1 richiesta | 15,1 | 7,6 s | 7,0 s | 2,7 GB |
+  | 2B @448, 2 richieste | **15,2** | 10,3 s | 12,6 s (in parallelo) | 3,1 GB |
+
+  A 384 px i testi peggiorano (parole chiave spurie, la data dentro la didascalia): si resta a 448. Il 3B passa nel gruppo `llm-extra` degli asset.
+- **Richieste in parallelo (`llm.parallel`, predefinito 2).** llama-server parte con `-np parallel` e `-c context×parallel`, quindi `llm.context` vale per richiesta. Il job tiene in volo fino a `parallel` foto; il database si tocca solo dal thread del job. Guadagno circa 11%: su CPU la fase immagine è serializzata, solo la generazione si sovrappone.
+- **Cache dei prefissi.** Le istruzioni fisse stanno prima dell'immagine e i nomi e il contesto dopo: system prompt e istruzioni (111 token) si riusano a ogni foto.
+- **Tempi per foto nel log** (`timings` di llama-server): token e secondi di prompt e risposta, per capire dove va il tempo.
+
+## D-07 Rinomina automatica degli originali [utente]
+- **Osservato.**
+  - Il vecchio Mosaic rinomina con `os.rename` in `NNNN_<descrizione>.<ext>` (`04_build_catalog.py:394-415`) e ha un rollback a parte (`rollback.py`).
+  - PhotoPrism non modifica **mai** gli originali in fase di index: rinomina solo in fase di import, con lo schema `2006/01/20060102_150405_<CRC32>`.
+- **Scelta.** Rinomina automatica, resa sicura con le strategie di PhotoPrism:
+  1. lo schema è configurabile, per default `{seq:04}_{slug}`;
+  2. si rinomina **l'intero stack** con lo stesso prefisso, così RAW+JPEG+XMP+MOV restano raggruppati (vedi IDX-07);
+  3. ogni operazione va in `rename_journal` **prima** della rinomina;
+  4. collisioni risolte con il suffisso `.00001`;
+  5. il rilevamento degli spostamenti per hash (IDX-13) impedisce reimportazioni;
+  6. dry-run e rollback per lotto.
+- **Perché.** Conserva la funzione di Mosaic ed elimina i rischi: stack spezzati, perdita di metadati, nessuna possibilità di annullare.
+
+## D-08 Database: SQLite in modalità WAL
+- **Osservato.** Il vecchio Mosaic usa SQLite e salva gli embedding come JSON di circa 23 KB per riga. PhotoPrism usa MariaDB oppure SQLite.
+- **Scelta.**
+  - SQLite 3.50 (FTS5 disponibile, verificato) con WAL e migrazioni numerate.
+  - Embedding come BLOB float16.
+  - Database in `data/mosaic.db`.
+- **Perché.** Niente server di database, file singolo facile da copiare. Il BLOB float16 è circa 15 volte più piccolo del JSON.
+
+## D-09 Indice vettoriale in memoria
+- **Osservato.** Il vecchio Mosaic calcola tutte le coppie in anticipo, O(n²), e tiene le prime 6 (`05_similarity_engine.py:94-125`).
+- **Scelta.** Matrice numpy caricata all'avvio, ricerca top-k al momento dietro l'interfaccia `VectorIndex`.
+- **Perché.** Con 100k foto da 768 dimensioni in float16 sono circa 150 MB e una query richiede meno di 50 ms su CPU. hnswlib si aggiunge solo se serve davvero (YAGNI).
+
+## D-10 Similarità spiegata
+- **Osservato.** Formula M: `0,48·cos + 0,18 stessa marca + 0,14 stessa categoria + 0,12 stessa inquadratura + 0,08 colore` (`05_similarity_engine.py:108-121`), con spiegazioni in italiano su 4 assi basate su parole chiave.
+- **Scelta.** `0,6·cos_siglip + 0,15·jaccard(etichette) + 0,1·persone in comune + 0,1·vicinanza temporale + 0,05·colori`. Le spiegazioni sui 4 assi (soggetto, inquadratura, palette, contesto) vengono generate dai contributi reali di ogni termine.
+- **Perché.** Il coseno diventa significativo (SigLIP invece delle classi ImageNet) e i bonus si basano su dati calcolati, non su metadati scritti a mano.
+
+## D-11 Priorità delle fonti dei metadati
+- **Osservato.** PhotoPrism `internal/entity/src.go`: ogni campo ha `*_src`, e una fonte inferiore non sovrascrive una superiore.
+- **Scelta.** Scala ridotta: auto 1, stima 2, nome 4, immagine 8, onnx 12, llm 16, xmp 32, manuale 64.
+- **Perché.** Senza questa regola l'LLM o un reindex cancellerebbero le correzioni manuali e i dati XMP.
+
+## D-12 Migrazione dal vecchio catalogo
+- **Osservato.** `_legacy/database/padova_moto_days.db`, tabella `photos`: 334 righe con `sha256`, `original_name`, `category`, `brand`, `model`, `shot_type`, `description`, `tags`. Le foto originali stavano su `E:\`, che su questo PC non c'è.
+- **Scelta.** `mosaic import-legacy <db>`: abbina per SHA-256 le foto indicizzate e importa i campi come fonte `manuale` (64), più un album "Padova Moto Days 2026".
+- **Perché.** Il lavoro curato non si perde. La migrazione è indipendente dal percorso: basta indicizzare la cartella delle foto ovunque si trovi.
+
+## D-13 Funzioni escluse [utente]
+Restano fuori mappa e luoghi, multiutente e condivisione, WebDAV, yt-dlp, MCP. Le motivazioni sono nel FEATURE_LEDGER, sezione 11. I dati GPS vengono salvati comunque, così la mappa si può aggiungere senza reindicizzare.
+
+## D-14 Licenze
+- **Osservato.** PhotoPrism è AGPL-3.0. I modelli scelti: SigLIP 2 Apache-2.0, YuNet MIT, SFace Apache-2.0, Qwen2.5-VL-3B con licenza Qwen Research, llama.cpp MIT, exiftool Artistic/GPL, ffmpeg essentials GPL.
+- **Scelta.** Si reimplementano strategie e costanti di PhotoPrism senza copiarne il codice. I binari restano programmi separati invocati come processi esterni.
+- **Da notare.** Qwen2.5-VL-3B è sotto licenza "Qwen Research", adatta all'uso personale. Per usi commerciali va sostituito con Gemma 3 4B (licenza Gemma) dal registro modelli.
+
+## D-15 Vincoli hardware
+- **Osservato.** i7-10510U (4 core / 8 thread), 7,8 GB di RAM, Intel UHD + NVIDIA MX130 da 2 GB. ONNX Runtime 1.31 offre solo i provider CPU e Azure. Il 19/10/2026 su C: restavano 7,1 GB liberi, prima dei download.
+- **Scelta.**
+  - Sessioni ONNX caricate in modo lazy e scaricate quando non servono.
+  - 2-3 worker.
+  - LLM e SigLIP mai in contemporanea.
+  - Miniature pre-generate fino a `fit_1920`; le taglie più grandi su richiesta.
+- **Rischio.** Lo spazio su disco: modelli più runtime occupano circa 3,4 GB. La cache delle miniature va stimata in circa 0,3 MB per foto. `data/` si può spostare su un altro disco da `config.yaml`.
+
+## D-16 Stile della UI: quello di sift-argus-v3 [utente]
+- **Osservato.** `C:\Users\matte\Desktop\sift-argus-v3\frontend` è React 19 + CSS Modules + `radix-ui` + `motion` + Lucide. I token stanno in `design-system/tokens/` (`semantic.css`, `foundation.css`, `base.css`). La sidebar è `src/app/shell/Sidebar.tsx`. La documentazione dice IBM Plex Sans + Source Serif 4, ma il codice usa Gilroy (font commerciale).
+- **Scelta.** Tre cose, descritte in [UI_SPEC.md](UI_SPEC.md):
+  1. si riusano i token di sift, la struttura e le misure della sua **sidebar** (272/72 px, bookmark tab, attivo = `--bg-selected` + `--accent-text`, drawer sotto 960 px) e le sue **costanti di movimento**;
+  2. le **icone** vengono da Lucide, con il suo wrapper (16 px, stroke 1,6, `aria-hidden`);
+  3. come font si usano **Outfit** e **IBM Plex Mono** (OFL, serviti in locale), non Gilroy.
+- **Perché.** È lo stile che l'utente preferisce; i token sono indipendenti dal framework. Gilroy ha licenza commerciale e il CDN che sift usa come ripiego contraddirebbe "tutto in locale".
+- **Framework: Vue 3 [utente, confermato il 19/10/2026].** Lo stack di D-01 non cambia. Si usano `@lucide/vue` (`lucide-vue-next` è deprecato) e `motion-v` 2.x, verificati in fase 7 e si rifanno sidebar e transizioni **con gli stessi token e gli stessi valori** di sift-argus-v3. React sarebbe servito solo a riusare `Sidebar.tsx` quasi direttamente.
+
+## D-17 Backup YAML dei dati manuali e scelte di memoria [implementazione]
+- **Scelta.** I dati inseriti a mano (titolo, didascalia, parole chiave, etichette, nomi dei volti, preferiti) si scrivono in `data/backup/<sha1[:2]>/<sha1>.yml`, uno per foto, solo se esiste almeno un dato manuale. Dopo ogni scrittura riuscita dell'API parte un job `backup` unico; alla prima elaborazione di una foto nuova il file, se c'è, si ripristina senza mai superare la priorità già presente.
+- **Perché.** È la strategia di PhotoPrism (`photo_yaml.go`): perdere il database non deve far perdere il lavoro curato a mano. Il nome è l'hash del contenuto, quindi sopravvive anche alla rinomina automatica.
+- **Memoria (8 GB).** La prova su libreria reale ha mostrato due guasti: "OpenBLAS: Memory allocation failed" e un `FaceEngine` rimasto mezzo inizializzato. Correzioni: thread BLAS/OMP/MKL limitati a metà dei core in `mosaic/__init__.py`, embedding del testo a blocchi di 32, `enable_cpu_mem_arena=False` e `enable_mem_pattern=False` in ONNX Runtime, inizializzazione atomica di `FaceEngine`, `release_models` a fine analisi.
+- **Titoli-identificatore.** Un titolo fatto di sole cifre, un GUID o un nome di scatto (`IMG_…`, `DSC…`) non descrive la foto e non vale come titolo: viene scartato (`JUNK_TITLES`), altrimenti diventava il nome del file dopo la rinomina.
+
+## D-18 Etichette, formato delle foto e contesto delle didascalie [utente]
+- **Etichette.** Tolte dal vocabolario (`models/labels_it.yaml`) quelle che descrivono la persona in sé: persona, persone, uomo, donna, bambino, neonato, ritratto, selfie, sorriso, mani. Restano le situazioni (folla, coppia, famiglia, amici, sposi, pilota, musicista). Chi c'è nella foto lo dicono i volti. All'avvio e a ogni analisi `prune_for_context` toglie dalle foto già analizzate le etichette automatiche non più nel vocabolario (quelle manuali restano) e cancella quelle rimaste senza foto.
+- **Formato e dimensioni nella ricerca.** `ratio:4:3` (alias `formato`), `mp:12` (`megapixel`), `width:`, `height:`, `mb:` (`peso`, dimensione del file). Un valore singolo ha tolleranza ±6%; gli intervalli (`mp:8-20`, `mb:2+`) sono esatti. Il formato rispetta l'orientamento: `4:3` è orizzontale, `3:4` verticale, `4:3|3:4` entrambi. Le foto senza dimensioni non corrispondono mai.
+- **Una cartella è un album.** Ogni cartella data alla libreria diventa un album automatico (`root:"<cartella>"`, sottocartelle comprese), anche quando le foto stanno direttamente al suo interno: prima in quel caso non nasceva nessun album. La descrizione dell'album, scritta dall'utente nella pagina dell'album ("Racconta la giornata"), sopravvive alla rigenerazione degli album automatici.
+- **Contesto nelle didascalie.** Il prompt riceve: `llm.about` (chi sei e cosa fotografi, Impostazioni), la giornata dei primi due album che contengono la foto (il più piccolo per primo), la data e il momento della giornata, e i nomi confermati. Il testo è limitato (400 e 900 caratteri) per stare nel contesto da 2048 token. Il prompt dice di usare il contesto solo se coerente con l'immagine.
+- **Rigenerazione.** `POST /api/albums/{ref}/caption` accoda un job con le sole foto dell'album, escluse quelle con titolo e didascalia da XMP. Non è un job `unique`, così non si fonde con una coda di didascalie già presente. I testi manuali e XMP non si sovrascrivono mai (priorità delle fonti).
+
+## D-19 Didascalie nel cloud, facoltative [utente]
+Su un PC con 8 GB e solo CPU una didascalia locale costa circa 17 s. L'utente accetta di mandare le foto a un servizio gratuito per andare più veloce, ma il locale resta il punto di partenza: l'installazione scarica sempre il modello e il cloud è **spento di default**.
+- **Ordine.** NVIDIA (`integrate.api.nvidia.com`, circa 40 richieste/min), poi OpenRouter con un modello `:free` (20 richieste/min, 50 al giorno, 1000 dopo un acquisto di 10 $ una tantum), poi il modello locale. Ordine e attivazione in `llm.cloud` (`config.yaml`). Entrambi usano `google/gemma-4-31b-it`, così la qualità non cambia passando dall'uno all'altro; modelli "reasoning" esclusi perché consumerebbero i 200 token di risposta. Limiti verificati sulle fonti dei servizi (ottobre 2026): possono cambiare, per questo il ritmo (35 e 18 richieste/min) sta sotto il limite e un 429 mette a riposo il servizio.
+- **Solo le didascalie.** Volti, SigLIP, ricerca e il resto non escono mai dal PC. Al cloud vanno la foto ridotta (`llm.image_size`), il testo «Chi sei», la giornata dell'album, la data e, se `llm.cloud.send_names`, i nomi confermati. I piani gratuiti possono conservare i dati: l'avviso è nella pagina Impostazioni accanto all'interruttore.
+- **Chiavi.** Si inseriscono in Impostazioni e stanno in `data/secrets.yaml` (cartella `data/` fuori da git, mai in `config.yaml`, mai restituite dall'API: `GET /api/llm/cloud` dice solo se una chiave c'è, `file` o `env`). In alternativa le variabili `NVIDIA_API_KEY` e `OPENROUTER_API_KEY`; la chiave salvata prevale. Le richieste vanno solo agli indirizzi fissi dei due servizi, mai a un indirizzo scelto dall'utente, e senza seguire reindirizzamenti.
+- **Catena.** Ogni foto va al primo servizio disponibile. Un 429 mette a riposo quel servizio (`Retry-After`, raddoppiato a ogni 429 di fila, al massimo 1 h) e la foto passa al successivo senza risultare fallita. Chiave, credito o modello rifiutati (401/402/403/404) escludono il servizio per tutto il giro e lo scrivono negli errori; errori 5xx o rete assente lo mettono a riposo. Il modello locale parte (e libera la RAM di SigLIP) solo quando nessun servizio cloud è utilizzabile; se il cloud torna disponibile le foto successive tornano lì. Senza cloud né modello locale il job fallisce con un messaggio chiaro e nessuna foto va persa.
+- **Differenze dal locale.** Il cloud non ha la grammatica JSON di llama-server: si affida al prompt, a `extract_json` e al secondo tentativo con prompt più rigido, già presenti.
+
+## D-20 Eliminare foto e scollegare cartelle [utente]
+Prima c'era solo «Archivia» (`deleted_at`, recuperabile da Archivio) e la «×» di una cartella in Libreria la toglieva dalla configurazione senza toccare il catalogo: le sue foto restavano visibili.
+- **Elimina, due modi in Impostazioni** (`delete_mode`, scelta dell'utente). **Chiarezza** (predefinito): la foto esce dal catalogo, il file resta sul disco e finisce in `excluded_files` (SHA-1, percorso, dimensione, data), così l'indicizzazione non la riaggiunge, nemmeno se il file viene rinominato o spostato (riconosciuto dall'hash). Si rimette dalla Libreria («Foto tolte dal catalogo»), che cancella l'esclusione e rilancia l'indice. **Pulizia**: tutti i file dello scatto (JPEG, RAW, XMP, video) vanno nel **Cestino di Windows** (`SHFileOperationW` con `FOF_ALLOWUNDO`, via `ctypes`) e la foto esce dal catalogo.
+- **Mai cancellazione definitiva.** Prima di muovere un file si controlla che stia su un disco fisso con un Cestino (`GetDriveTypeW`, `SHQueryRecycleBinW`): su rete o chiavette `FOF_ALLOWUNDO` cancellerebbe davvero, quindi Mosaic rifiuta, non tocca il file e la foto resta nel catalogo (compare tra i `failed` della risposta). Controlli aggiuntivi dopo la revisione: il Cestino non deve essere impostato su «elimina subito» (`NukeOnDelete`) né essere più piccolo del file (`MaxCapacity`, letti dal registro), altrimenti Windows eliminerebbe senza chiedere; come ultima difesa non si passa `FOF_NOCONFIRMATION` e si passa `FOF_WANTNUKEWARNING`, così un'eliminazione definitiva imprevista chiede conferma all'utente. Ogni «Elimina» passa da una conferma che dice cosa succede in quel modo. Le foto già archiviate restano com'erano: Archivia non cambia.
+- **Dove.** Griglia (barra della selezione, «Elimina…»), dettaglio foto (menu «Altre azioni») e album: nella pagina di un album manuale la barra offre anche «Togli dall'album» (non elimina nulla, usa `remove_from_album`). `POST /api/photos/remove`.
+- **Scollegare una cartella.** `POST /api/library/roots/unlink` toglie subito la radice da `library_roots` e accoda un job `unlink` che cancella dal catalogo file, foto, miniature, embedding, volti, didascalie e album automatici di quella radice (`organize/catalog.py`). I file su disco non si toccano mai. Una foto con file anche in un'altra radice resta. `index_roots` si ferma da solo se la radice sparisce dalla configurazione mentre gira. Chi aveva già usato la «×» vede le cartelle rimaste nel catalogo come «non più collegata» e può toglierle del tutto.
+- **Dati manuali: si conservano** (scelta dell'utente). Prima di cancellare ogni foto si scrive il backup YAML di D-17 (titolo, didascalia, parole chiave, etichette, preferiti, nomi dei volti, album manuali). L'abbinamento usa lo **SHA-1** del file principale, come in D-17, non lo SHA-256: è l'hash con cui il backup è già indicizzato. Persone e album manuali restano nel database anche vuoti. Ricollegando la cartella («Ricollega» in Libreria, che riusa `library_roots` e un `index`) tutta la catena riparte da zero (indice, miniature, SigLIP, volti, moments, didascalie, rinomina) e i dati manuali tornano alla prima elaborazione di ogni foto.
+- **Cosa si perde.** Lo storico delle rinomine dei file di quella cartella (`rename_journal` è in cascata): una volta scollegata, la rinomina non si può più annullare da Mosaic. Le esclusioni sopravvivono allo scollegamento perché sono una scelta dell'utente.
+- **Limite noto.** Con più file nel Cestino, se Windows sposta solo una parte (errore a metà) la foto resta nel catalogo e i file già nel Cestino vengono segnati come mancanti (il toast invita a controllare anche il Cestino). Il Cestino reale non è coperto dai test automatici (si usa una funzione finta): la prova su una foto vera è manuale.
+
+## D-21 «Crea selezione»: le foto che riassumono un evento [utente]
+L'utente vuole, da un album o da una cartella, un riassunto dell'evento: foto venute bene, il più possibile diverse tra loro e con persone diverse, nel numero e nel formato scelti. Piano in `PIANO_SELEZIONE.md`.
+- **Dove.** Tasto «Crea selezione» nell'header della pagina di album, cartella e momento. Apre la barra laterale come i Filtri (sotto i 960 px un drawer): quante foto (1–200, scelte rapide 12/24/36/50), formato (orientamento o proporzioni, stessa tolleranza ±6% di `ratio:`), cosa conta di più (Qualità, Bilanciata, Varietà), più persone diverse, «Deve esserci» (testo o filtri come nella ricerca), video sì/no, e il conteggio dal vivo delle foto adatte. Il risultato si apre come una ricerca in `/albums/:uid/selection`, con i parametri nell'indirizzo: griglia in ordine di scatto (i motivi della scelta nel tooltip di ogni foto), riquadro «Come ho scelto» (linea del tempo dell'evento, persone, scartate), Modifica, Rigenera, Seleziona tutte e Salva come album. Nessuna foto viene modificata.
+- **Qualità.** Sulla miniatura `fit_720`: nitidezza come varianza del Laplaciano su una griglia 4×4, 90° percentile delle celle (lo sfondo sfocato di un ritratto non penalizza il soggetto a fuoco); esposizione dal 90° percentile della luminanza, dalle alte luci bruciate e dal contrasto (lo sfondo nero di una foto notturna col flash non conta). Le misure si salvano in `photo_aesthetics` (migrazione 4) con lo SHA-1 del file, quindi si calcolano una volta sola: circa 10 s la prima volta su 200 foto, poi 0,1 s. Si aggiungono l'estetica SigLIP (somiglianza a «foto bella, nitida, ben composta» meno «sfocata, buia, screenshot», in classifica dentro l'album), preferite, rating XMP, volti grandi e risoluzione. Le foto mosse o buie restano fuori quando ce ne sono abbastanza di buone.
+- **Varietà.** Scelta golosa (MMR): a ogni passo vince `qualità + fascia di tempo non coperta + persone nuove − somiglianza con le già scelte`. Raffiche e quasi-doppioni (coseno SigLIP ≥ 0,92, o phash e 10 s se mancano gli embedding) sono esclusi: resta la migliore. L'evento è diviso in N fasce con lo stesso numero di foto; le persone sono quelle con nome e i gruppi di volti senza nome, e chi è già comparso pesa sempre meno. «Rigenera» aggiunge una piccola variazione casuale con un seme nell'indirizzo, così ogni selezione si può riaprire uguale.
+- **Prova reale.** Cartella `144___09` (202 foto, festa notturna): 26 scartate (buie, mosse, scatti accidentali), 24 scelte che coprono tutte le 28 persone e tutta la serata.
+- `POST /api/albums/{ref}/curate` (validazione pydantic: count 1–200, formato da elenco, modo, seme).
+
+## D-22 Solo volti in primo piano [utente]
+Mosaic serve a ordinare le foto di eventi. Riconoscere chiunque sia nella folla sullo sfondo è pesante (più volti da calcolare, raggruppare e nominare) e non serve: crea gruppi di sconosciuti e falsa le persone di «Crea selezione».
+- **Regola.** Un volto resta se è alto almeno il **7% del lato corto** della foto (`foreground_size`) e almeno la **metà del volto principale** (`foreground_ratio`). Il volto principale è il più grande tra quelli rilevati con sicurezza (punteggio da clustering, 85): così un falso rilevamento grande e incerto, come una mano o un bicchiere, non fa sparire le persone vere. In una foto di folla senza nessuno vicino all'obiettivo non resta nessun volto. Valori in `models/models.yaml`, tarati a occhio sulla cartella `144___09` (festa notturna): restano le persone in posa o vicine, spariscono la gente dietro e i volti dei poster.
+- **Dove.** In `FaceEngine.detect`, dopo l'eliminazione dei doppioni e prima dell'embedding: i volti di sfondo non costano più il calcolo ArcFace. Le librerie già analizzate si puliscono all'avvio (`prune_background`, poi un job `faces` rifà gruppi e conteggi) e a ogni giro dei volti.
+- **Cosa resta sempre.** I volti con un nome dato o confermato a mano (`src >= MANUAL`) non si toccano mai, anche se piccoli; contano anche come riferimento per il volto principale. Sulla libreria reale: 48 dei 129 volti automatici erano di sfondo (382 volti in tutto, 253 a mano).
+
+## D-23 Attività con progresso vero [utente]
+L'utente vuole che caricamento ed elaborazione si vedano «come in un'applicazione di spessore». Piano in `PIANO_ATTIVITA_IMPORT_POSTER.md`.
+- **Dati.** I job hanno `done` e `total` (migrazione 5), negli eventi SSE e in `GET /api/jobs` insieme a `started_at`. Li riportano indicizzazione (totale stimato dai file già nel catalogo; ignoto la prima volta, quindi barra indeterminata), metadati, analisi AI, ricalcolo dei volti, didascalie, aggiunta di file e poster. Per i job ancora in coda con un elenco di foto il totale è la lunghezza dell'elenco.
+- **Interfaccia.** Barra Attività in cima al contenuto: fase, «passo 3 di 6», «128 di 450 foto», tempo rimanente, percentuale, barra con una luce che scorre (indeterminata quando il totale non si conosce). Apre il pannello Attività (drawer a destra): la pipeline come passi (Indicizzazione → Metadati e miniature → Analisi AI → Volti → Album automatici → Didascalie) con fatto / in corso / in coda / non riuscita, le altre attività, i caricamenti e lo storico recente; si può annullare una fase con tutti i suoi blocchi. Anello di progresso nella sidebar, visibile anche compressa.
+- **Tempo rimanente.** Misurato dal vivo sul ritmo degli ultimi 90 secondi (almeno 4 s di storia), non dalla durata media: si adatta quando l'LLM o il disco rallentano. I blocchi `process` della stessa ondata si sommano in un'unica barra.
+- **Dopo la revisione.** L'evento «in coda» porta già il totale del blocco; `GET /api/jobs` e l'interfaccia tengono **tutti** i job attivi (centinaia di blocchi `process` in coda) e solo gli ultimi 40 finiti, così il totale della fase è giusto fin dall'inizio; «Annulla» su una fase chiama `POST /api/jobs/cancel-type/{tipo}` e ferma anche i blocchi in coda. La stima dei file da indicizzare confronta le cartelle con `same_root`.
+- Animazioni solo su `transform`/`opacity`, ferme con `prefers-reduced-motion`.
+
+## D-24 Sincronizzazione con il computer [utente]
+In Impostazioni, al posto di «Chiarezza / Pulizia» (D-20), due modi con lo stesso campo `delete_mode`:
+- **Solo interfaccia** (`catalog`, predefinito): Mosaic non tocca i file; Elimina toglie la foto dal catalogo. Un file cancellato dal computer resta «mancante» finché non si fa la pulizia. Se la rinomina automatica è accesa la pagina avvisa che cambia i nomi sul disco (resta un'impostazione a parte: non la spengo da solo).
+- **Sincronizzata** (`trash`): Elimina manda i file nel Cestino (come D-20) e, dopo ogni indicizzazione, i file cancellati dal computer escono anche dal catalogo (`catalog.sync_deleted`, con backup YAML dei dati manuali). Cautele contro la perdita del catalogo (rafforzate dopo la revisione): si saltano le cartelle non raggiungibili (disco staccato, rete), quelle in cui mancano tutti i file e quelle in cui manca all'improvviso più della metà dei file (da 50 file in su); ogni file si toglie solo se la sua sottocartella esiste ancora e lui, ricontrollato sul disco, non c'è (una sottocartella illeggibile per un attimo, o cancellata per intero, resta «mancante» e si toglie con la pulizia); la sincronizzazione parte solo dopo un giro su tutte le cartelle, così un file spostato in un'altra cartella della libreria viene ritrovato e non cancellato. Liste a blocchi di 500 per i limiti di SQLite. Casella «Accorgiti da sola dei cambiamenti» = `auto_index_delay` 30 s.
+
+## D-25 Trascina e rilascia [utente]
+- **App desktop.** pywebview 6 dà il percorso vero dei file rilasciati (`pywebviewFullPath`, da `DOMEventHandler` sul `drop` del documento); `desktop.py` lo passa alla pagina con `window.mosaicDrop([...])`. Una **cartella** di default si **collega dov'è** (entra in `library_roots`, nessuna copia: il percorso originale resta quello) oppure si copia; **foto e video** si copiano nella libreria con l'XMP accanto (import per data come «Importa», mai doppioni); uno **zip** si estrae in `data/cache/imports/<id>` e si importa. Elementi già dentro la libreria si ricontrollano soltanto; una cartella che contiene la libreria si copia invece di collegarla; cartelle ripetute o una dentro l'altra si collegano una volta sola (niente radici annidate).
+- **Browser** (`mosaic serve`): il percorso non c'è. I file (cartelle comprese, lette con `webkitGetAsEntry`) si caricano con `PUT /api/drop/upload/<lotto>?path=` (corpo grezzo: niente dipendenza `python-multipart`) con la barra di caricamento, poi `finish` accoda il job `drop`.
+- **Sicurezza.** Zip: solo foto, video e XMP; niente percorsi assoluti, `..`, lettere di unità, cartelle nascoste o `__MACOSX`; massimo 50 000 voci e 40 GB estratti; rapporto di compressione oltre 200 sull'intero archivio rifiutato (zip bomb), una singola voce enorme e ultracompressa saltata (un BMP piatto da pochi MB invece passa); controllo dello spazio libero prima di estrarre. Caricamenti: lotto `[a-z0-9]{8,32}`, percorso relativo ripulito e confinato nel lotto, solo estensioni note, 16 GB per file, spazio libero controllato. Le rotte `drop` e `posters` non generano il job di backup a ogni richiesta.
+- Il dialogo di conferma dice cosa succederà a ogni elemento (collegata, copiata, ricontrollata, saltata) e dove vanno le copie.
+
+## D-26 Poster a mosaico stile Mondrian [utente]
+Dalla pagina della selezione, «Crea poster».
+- **Impaginazione ad albero.** Ogni nodo affianca (V) o impila (H) due sottoalberi; le proporzioni naturali di un sottoalbero si calcolano dal basso (affiancati si sommano le larghezze, impilati le altezze), così i riquadri somigliano alle foto e si taglia poco. I tagli seguono per il 70% le proporzioni e per il 30% l'importanza: le foto migliori (nitidezza misurata in D-21, preferite) pesano 3 volte e prendono riquadri 2-2,5 volte più grandi. Ricerca: ripartenze casuali con un seme, poi miglioramento locale (scambio di due riquadri, taglio girato) finché il costo scende. Le proporzioni dei sottoalberi si calcolano in un solo passaggio per valutazione e il lavoro totale ha un budget (150 000 riquadri×valutazioni): sotto il secondo anche con 200 foto (ritaglio medio 6-9% fino a 24 foto, ~30% a 200). Il piano si calcola una richiesta alla volta e resta in cache: il file finale riusa quello dell'anteprima. La cartella dei poster ha `.mosaicstorage`, quindi non si indicizza nemmeno se sta dentro la libreria. Costo: ritaglio pesato per area, area rispetto all'importanza, strisce sottili (lato minimo 7% del lato corto). Prova con 24 foto su A3: ritaglio medio ~10%, meno di un secondo.
+- **Mondrian.** Righe nere spesse e 0-6 riquadri colorati che, con proporzioni libere, assorbono le differenze tra le foto. Anche stile Galleria (bordi bianchi) e Senza bordi.
+- **I riquadri non restano vuoti** (richiesta dell'utente): portano i dati dell'evento **in negativo**, cioè testo chiaro su fondo pieno. Nell'ordine, dal riquadro più grande: occasione (dal titolo dell'album, modificabile), data («13–14 settembre 2025», calcolata dalle foto o scritta a mano), luogo (scritto a mano; Mosaic non ha la geocodifica offline), orario, persone, numero di foto. I riquadri non sono mai più dei dati disponibili. Colori rosso, blu, nero e giallo: il bianco di Mondrian diventa nero, perché il testo chiaro sul bianco non si leggerebbe; sul giallo il testo resta scuro per lo stesso motivo. Carattere Bahnschrift (Windows; poi Segoe UI, Arial). Etichetta piccola in alto a sinistra, valore grande in basso a sinistra, la misura più grande che sta nel riquadro; l'anteprima riceve le stesse righe e le stesse misure (unità `cqh`).
+- **Ritaglio sui volti.** Centro dei marker pesato per grandezza (D-22), altrimenti poco sopra il centro.
+- **File.** JPEG qualità 92 a 150/200/300 dpi (abbassati in automatico sopra i 30 megapixel per stare in 8 GB) in `Immagini\Mosaic`, creato in un job `poster` con il progresso riquadro per riquadro. Il job può girare accanto all'analisi AI (`PARALLEL_TYPES`): non deve aspettare un'ora di analisi. Ogni foto si legge dalla miniatura più piccola che basta (fino a `fit_4096`, creata se manca). Apri, Mostra nella cartella (Esplora file) e Scarica.
+- **Anteprima.** `POST /api/posters/layout` dà la stessa impaginazione e gli stessi ritagli del file, disegnata nel browser con le miniature: quello che vedi è quello che stampi.
+
+## D-27 Selezioni e poster salvati nell'album di partenza; correzioni dopo la prima prova [utente]
+- **Dove si salvano.** «Salva nell'album» crea un album con le foto scelte (le foto non si spostano né si copiano) legato a quello di partenza (`albums.source` = «tipo:slug», migrazione 6: resta valido anche quando gli album automatici si rigenerano). I poster vanno, per una cartella del disco, nella sua sottocartella `Mosaic` (con `.mosaicstorage`, quindi mai indicizzata come foto); per gli altri album in `Immagini\Mosaic\<titolo>`. Scrivere quella sottocartella è l'unica scrittura nelle cartelle delle foto anche in «Solo interfaccia», perché l'ha chiesta l'utente. Nella pagina dell'album la sezione «Selezioni e poster» mostra entrambi (Apri, Mostra nella cartella); l'album di una selezione dice da dove viene.
+- **Sidebar.** Cartelle, momenti e mesi si aprono anch'essi in `/albums/:uid`: la sidebar evidenziava sempre «Album». Ora la pagina imposta la sezione giusta (Cartelle, Momenti, Calendario).
+- **Avvio con due Mosaic insieme.** Ogni migrazione gira in una transazione esclusiva con il suo numero di versione e il secondo processo la rilegge dopo aver aspettato: niente più «table photo_aesthetics already exists» e «Mosaic non è riuscito ad avviarsi» (successo davvero).
+- **Poster, dalla prima prova reale.** L'occasione seguiva il titolo vuoto al primo montaggio («selezione»): ora segue il titolo dell'album finché non la si cambia. Il riquadro nero si confondeva con le righe: solo rosso, blu e giallo. L'orario ignora il 4% di foto agli estremi (una foto del mattino dopo allungava la serata a «21:30–13:54») e va a capo nei riquadri stretti. «Scarica» funziona anche nella finestra dell'app (download abilitati in WebView2); «Mostra nella cartella» passa a Esplora `/select,"percorso"` in un solo argomento. L'anteprima sta tutta nello schermo, senza scorrere: il foglio si adatta allo spazio (unità `cq`) e le opzioni sono più compatte.
+
+## D-28 Fermare e riavviare subito [utente]
+Fermare un'attività era troppo lento: l'annullamento si controllava solo in certi punti.
+- **Dove si controlla ora.** Indicizzazione: a ogni gruppo di file, anche a metà di una cartella grande (prima di segnare i mancanti, così i file non ancora visti non risultano spariti). Analisi AI: SigLIP a blocchi di 2 immagini e a ogni volto; un lotto interrotto non si salva e si rifà la volta dopo. Volti: tra un passo e l'altro, con la transazione annullata (`FacesCancelled`). Didascalie: le richieste già in volo non si aspettano più (costavano fino a mezzo minuto l'una); il client HTTP si chiude e le foto si rifanno dopo; si controlla ogni 0,25 s. Conversione video: ffmpeg controllato ogni 0,2 s e chiuso subito. Di solito ci si ferma in meno di 2 secondi.
+- **Fase intera.** Fermare e riavviare agiscono su tutta la fase (`POST /api/jobs/cancel-type` e `/restart-type/{tipo}`): i metadati sono divisi in molti blocchi e fermarne uno solo faceva partire il successivo. «Riavvia» ferma la fase e la rimette in coda da capo (i metadati ripartono dall'indicizzazione); i job pesanti non si sovrappongono, quindi il nuovo parte appena il vecchio si è fermato. Appena si annulla, il job in corso mostra «In arresto…».
+
+## D-29 Didascalia facoltativa, spenta di default [utente]
+La frase di didascalia è la parte lenta di ogni risposta. Con il modello locale (Qwen3-VL 2B, CPU) il prompt con l'immagine costa circa 12 s e la risposta circa 25 s (70–99 token a 2–4 tok/s); la frase è circa metà di quei token. Con il cloud (NVIDIA, 20 ottobre 2026, 3 foto, `meta/llama-3.2-11b-vision-instruct`) una richiesta ha impiegato in media 21 s con la frase e 12 s senza. Nella stessa prova `google/gemma-4-31b-it`, il modello predefinito di D-19, non ha risposto per niente (timeout, e alle 16:17 un 502), anche a una richiesta di solo testo.
+- **Opzione.** `llm.caption` (Impostazioni, «Scrivi anche la didascalia»), **spenta di default**. Spenta, l'LLM riceve un prompt e uno schema JSON con solo titolo e parole chiave (`PROMPT_SHORT`, `SCHEMA_SHORT`, al massimo 120 token di risposta) e la didascalia della foto non si tocca: resta quella di XMP, quella manuale o vuota. Titolo e parole chiave bastano per la ricerca e per la rinomina.
+- **Tempi nel log.** Il cloud non manda i `timings` di llama-server: per ogni foto si scrive la durata dell'intera richiesta (`didascalia della foto N da NVIDIA in X s`).
+- **Cloud che non risponde.** Prima una richiesta cloud aspettava fino a 600 s (`REQUEST_TIMEOUT`, pensato per la CPU), veniva ritentata e poi la foto risultava non riuscita. Ora il cloud ha `CLOUD_TIMEOUT` di 60 s (le risposte misurate stanno tra 8 e 35 s): scaduto, il servizio va a riposo come per un 5xx (`BackendDown`, 120 s che raddoppiano) e la foto passa al servizio successivo o al modello locale, senza un secondo tentativo e senza contare come fallita. Il modello locale tiene i 600 s. Verificato su NVIDIA con `gemma-4-31b-it` bloccato: rinuncia dopo 60,5 s.
+- **Fuori dalla pipeline** (scelta dell'utente, dopo). Le descrizioni con l'AI non sono più un passo standard: `llm.mode` vale `on-demand` di default, quindi dopo gli album automatici si passa subito alla rinomina. Si chiedono dalla Libreria o si rimettono in automatico solo da Impostazioni («Quando»); la configurazione guidata non ne parla più. Il pannello Attività mostra il passo «Didascalie» solo se sono automatiche (`caption_auto` in `GET /api/status`) o finché c'è un job di didascalie chiesto a mano. Chi aveva già `mode: newly-indexed` nel proprio `config.yaml` lo tiene finché non lo cambia.
