@@ -122,8 +122,25 @@ def _on_start(window: object) -> None:
     _apply_window_icon(window)
 
 
+_window: object | None = None  # la finestra WebView2 aperta: serve a «Scegli cartella» (D-30)
+
+
+def pick_folder(start: str = "") -> str | None:
+    """Apre la finestra di Windows per scegliere una cartella. RuntimeError fuori dall'app desktop."""
+    if _window is None:
+        raise RuntimeError("finestra di scelta disponibile solo nell'app desktop")
+    import webview
+
+    folder = Path(start) if start else Path.home()
+    while not folder.is_dir() and folder.parent != folder:  # la cartella proposta di solito non esiste ancora
+        folder = folder.parent
+    chosen = _window.create_file_dialog(webview.FileDialog.FOLDER, directory=str(folder))  # type: ignore[attr-defined]
+    return str(chosen[0]) if chosen else None
+
+
 def open_webview(url: str) -> bool:
     """Finestra nativa con WebView2. Ritorna False se pywebview/WebView2 non sono utilizzabili."""
+    global _window
     try:
         import webview
     except ImportError:
@@ -134,6 +151,7 @@ def open_webview(url: str) -> bool:
         webview.settings["ALLOW_DOWNLOADS"] = True  # «Scarica» del poster: senza, WebView2 ignora il clic
         window = webview.create_window(TITLE, url, width=WINDOW_SIZE[0], height=WINDOW_SIZE[1],
                                        min_size=MIN_SIZE, text_select=True, zoomable=True)
+        _window = window
         webview.start(_on_start, window, gui="edgechromium", private_mode=False,
                       storage_path=str(WEBVIEW_DIR))
         return True

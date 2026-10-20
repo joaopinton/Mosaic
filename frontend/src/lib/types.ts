@@ -102,6 +102,11 @@ export interface Album {
 
 export interface PosterFile { name: string; size: number; created: string }
 
+// --- esportazione in una cartella (D-30) ---
+export interface EnhanceOptions { light: boolean; contrast: boolean; vivid: boolean; harmonize: boolean; strength: 'light' | 'medium' | 'strong' }
+export interface ExportRequest { uids: string[]; dest: string; raw: boolean; videos: boolean; enhance: EnhanceOptions | null }
+export interface ExportPreviewShot { uid: string; before: string; after: string }
+
 export interface LabelInfo { name: string; slug: string; category: string; count: number; cover: string | null }
 export interface Subject { uid: string; name: string; slug: string; photo_count: number; hidden: boolean; favorite: boolean; marker: string | null }
 export interface FaceGroup { face: string; samples: number; marker: string }

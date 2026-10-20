@@ -24,6 +24,7 @@ const OTHER: Record<string, Omit<StageInfo, 'type'>> = {
   unlink: { label: 'Scollegamento cartella', icon: 'folder', unit: '' },
   backup: { label: 'Backup dei dati manuali', icon: 'archive', unit: '' },
   drop: { label: 'Aggiunta dei file rilasciati', icon: 'plus', unit: 'elementi' },
+  export: { label: 'Esportazione', icon: 'download', unit: 'foto' },
 }
 
 export function stageInfo(type: string): StageInfo {

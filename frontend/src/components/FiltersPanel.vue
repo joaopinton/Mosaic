@@ -1,19 +1,22 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { api } from '../lib/api'
+import { buildQuery, emptyForm, formFromQuery, type FilterForm } from '../lib/query'
 import { pushHistory } from '../lib/store'
 import type { Album, LabelInfo, Subject } from '../lib/types'
 import Icon from './Icon.vue'
 
 // Pannello "morph" della sidebar: sostituisce il contenuto, allarga la colonna e costruisce una query di ricerca.
+// Si apre già compilato con la ricerca corrente, così i filtri si aggiungono o tolgono uno per uno.
 const emit = defineEmits<{ close: [] }>()
+const route = useRoute()
 const router = useRouter()
 
-const form = reactive({
-  text: '', type: '', year: '', month: '', label: '', person: '', album: '', camera: '', color: '', orientation: '',
-  ratio: '', mp: '', favorite: false, review: false, faces: false, geo: false,
-})
+const currentQuery = (): string => (route.path === '/search' && typeof route.query.q === 'string' ? route.query.q : '')
+const form = reactive<FilterForm>(formFromQuery(currentQuery()))
+watch(currentQuery, (q) => Object.assign(form, formFromQuery(q)))
+
 const labels = ref<LabelInfo[]>([])
 const people = ref<Subject[]>([])
 const albums = ref<Album[]>([])
@@ -29,22 +32,46 @@ onMounted(async () => {
   if (a.status === 'fulfilled') albums.value = a.value ?? []
 })
 
-const quote = (v: string): string => (/\s/.test(v) ? `"${v}"` : v)
+type MultiKey = 'people' | 'labels' | 'albums' | 'colors'
+interface Option { value: string, text: string }
+interface MultiField { key: MultiKey, id: string, label: string, hint: string, add: string, options: Option[] }
 
-function buildQuery(): string {
-  const parts: string[] = []
-  if (form.text.trim()) parts.push(form.text.trim())
-  const simple: [string, string][] = [['type', form.type], ['year', form.year], ['month', form.month], ['label', form.label],
-    ['person', form.person], ['album', form.album], ['camera', form.camera], ['color', form.color], ['ratio', form.ratio],
-    ['mp', form.mp]]
-  for (const [key, value] of simple) if (value.trim()) parts.push(`${key}:${quote(value.trim())}`)
-  if (form.orientation) parts.push(`${form.orientation}:true`)
-  for (const key of ['favorite', 'review', 'faces', 'geo'] as const) if (form[key]) parts.push(`${key}:true`)
-  return parts.join(' ')
+// Scelte multiple: persone ed etichette devono esserci tutte, per album e colori ne basta uno.
+const multi = computed<MultiField[]>(() => [
+  { key: 'people', id: 'f-person', label: 'Persone', hint: 'tutte nella foto', add: 'Aggiungi una persona…',
+    options: people.value.map((p) => ({ value: p.slug, text: p.name })) },
+  { key: 'labels', id: 'f-label', label: 'Etichette', hint: 'tutte insieme', add: 'Aggiungi un\'etichetta…',
+    options: labels.value.slice(0, 200).map((l) => ({ value: l.slug, text: `${l.name} (${l.count})` })) },
+  { key: 'albums', id: 'f-album', label: 'Album', hint: 'almeno uno', add: 'Aggiungi un album…',
+    options: albums.value.map((a) => ({ value: a.slug, text: a.title })) },
+  { key: 'colors', id: 'f-color', label: 'Colori', hint: 'almeno uno', add: 'Aggiungi un colore…',
+    options: COLORS.map((c) => ({ value: c, text: c })) },
+])
+
+// Nome da mostrare nel chip (senza il conteggio delle etichette); lo slug se l'elenco non è ancora arrivato.
+function nameOf(options: Option[], value: string): string {
+  return options.find((o) => o.value === value)?.text.replace(/ \(\d+\)$/, '') ?? value
 }
 
+function pick(key: MultiKey, event: Event): void {
+  const select = event.target as HTMLSelectElement
+  const value = select.value
+  select.value = ''
+  if (value && !form[key].includes(value)) form[key] = [...form[key], value]
+}
+
+function unpick(key: MultiKey, value: string): void {
+  form[key] = form[key].filter((v) => v !== value)
+}
+
+function dropExtra(raw: string): void {
+  form.extra = form.extra.filter((v) => v !== raw)
+}
+
+const query = computed(() => buildQuery(form))
+
 function apply(): void {
-  const q = buildQuery()
+  const q = query.value
   if (!q) return
   pushHistory(q)
   void router.push({ path: '/search', query: { q } })
@@ -52,8 +79,7 @@ function apply(): void {
 }
 
 function reset(): void {
-  Object.assign(form, { text: '', type: '', year: '', month: '', label: '', person: '', album: '', camera: '', color: '',
-    orientation: '', ratio: '', mp: '', favorite: false, review: false, faces: false, geo: false })
+  Object.assign(form, emptyForm())
 }
 </script>
 
@@ -72,9 +98,9 @@ function reset(): void {
             <option value="">Tutti</option><option value="image">Foto</option><option value="video">Video</option>
             <option value="live">Live Photo</option><option value="animated">Animate</option><option value="raw">Con RAW</option>
           </select></div>
-        <div class="field"><label for="f-color">Colore</label>
-          <select id="f-color" v-model="form.color" class="select"><option value="">Qualsiasi</option>
-            <option v-for="c in COLORS" :key="c" :value="c">{{ c }}</option></select></div>
+        <div class="field"><label for="f-orient">Orientamento</label>
+          <select id="f-orient" v-model="form.orientation" class="select"><option value="">Qualsiasi</option>
+            <option value="landscape">Orizzontale</option><option value="portrait">Verticale</option><option value="square">Quadrata</option></select></div>
       </div>
       <div class="two">
         <div class="field"><label for="f-year">Anno</label>
@@ -83,21 +109,14 @@ function reset(): void {
           <select id="f-month" v-model="form.month" class="select"><option value="">Tutti</option>
             <option v-for="(m, i) in MONTHS" :key="m" :value="String(i + 1)">{{ m }}</option></select></div>
       </div>
-      <div class="field"><label for="f-label">Etichetta</label>
-        <select id="f-label" v-model="form.label" class="select"><option value="">Qualsiasi</option>
-          <option v-for="l in labels.slice(0, 200)" :key="l.slug" :value="l.slug">{{ l.name }} ({{ l.count }})</option></select></div>
-      <div class="field"><label for="f-person">Persona</label>
-        <select id="f-person" v-model="form.person" class="select"><option value="">Chiunque</option>
-          <option v-for="p in people" :key="p.uid" :value="p.slug">{{ p.name }}</option></select></div>
-      <div class="field"><label for="f-album">Album</label>
-        <select id="f-album" v-model="form.album" class="select"><option value="">Tutti</option>
-          <option v-for="a in albums" :key="a.uid" :value="a.slug">{{ a.title }}</option></select></div>
-      <div class="two">
-        <div class="field"><label for="f-camera">Fotocamera</label>
-          <input id="f-camera" v-model="form.camera" class="input" placeholder="nikon d850" autocomplete="off" /></div>
-        <div class="field"><label for="f-orient">Orientamento</label>
-          <select id="f-orient" v-model="form.orientation" class="select"><option value="">Qualsiasi</option>
-            <option value="landscape">Orizzontale</option><option value="portrait">Verticale</option><option value="square">Quadrata</option></select></div>
+      <div v-for="m in multi" :key="m.key" class="field">
+        <label :for="m.id">{{ m.label }} <span v-if="form[m.key].length > 1" class="hint">· {{ m.hint }}</span></label>
+        <select :id="m.id" class="select" @change="pick(m.key, $event)"><option value="">{{ m.add }}</option>
+          <option v-for="o in m.options" :key="o.value" :value="o.value" :disabled="form[m.key].includes(o.value)">{{ o.text }}</option></select>
+        <ul v-if="form[m.key].length" class="picked" :aria-label="`${m.label} scelte`">
+          <li v-for="v in form[m.key]" :key="v" class="chip accent">{{ nameOf(m.options, v) }}<button type="button"
+            :aria-label="`Togli ${nameOf(m.options, v)}`" @click="unpick(m.key, v)"><Icon name="x" :size="12" /></button></li>
+        </ul>
       </div>
       <div class="two">
         <div class="field"><label for="f-ratio">Formato</label>
@@ -106,6 +125,8 @@ function reset(): void {
         <div class="field"><label for="f-mp">Megapixel</label>
           <input id="f-mp" v-model="form.mp" class="input" inputmode="decimal" placeholder="12 o 8-20" autocomplete="off" /></div>
       </div>
+      <div class="field"><label for="f-camera">Fotocamera</label>
+        <input id="f-camera" v-model="form.camera" class="input" placeholder="nikon d850" autocomplete="off" /></div>
       <fieldset class="checks">
         <legend class="caps">Solo</legend>
         <label><input v-model="form.favorite" type="checkbox" /> Preferiti</label>
@@ -113,10 +134,17 @@ function reset(): void {
         <label><input v-model="form.faces" type="checkbox" /> Con volti</label>
         <label><input v-model="form.geo" type="checkbox" /> Con posizione GPS</label>
       </fieldset>
+      <div v-if="form.extra.length" class="field">
+        <span class="label">Altri filtri della ricerca</span>
+        <ul class="picked" aria-label="Altri filtri">
+          <li v-for="raw in form.extra" :key="raw" class="chip accent mono">{{ raw }}<button type="button" :aria-label="`Togli ${raw}`"
+            @click="dropExtra(raw)"><Icon name="x" :size="12" /></button></li>
+        </ul>
+      </div>
     </div>
     <footer class="foot">
       <button type="button" class="btn" @click="reset">Azzera</button>
-      <button type="submit" class="btn primary" :disabled="!buildQuery()"><Icon name="search" /> Cerca</button>
+      <button type="submit" class="btn primary" :disabled="!query"><Icon name="search" /> Cerca</button>
     </footer>
   </form>
 </template>
@@ -127,6 +155,8 @@ function reset(): void {
 .head h2 { font-size: var(--text-lg); }
 .fields { display: flex; flex: 1; flex-direction: column; gap: var(--space-3); min-height: 0; overflow-y: auto; padding: 0 var(--space-1) var(--space-3); }
 .two { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-3); }
+.picked { display: flex; flex-wrap: wrap; gap: var(--space-1-5); margin: var(--space-1) 0 0; padding: 0; list-style: none; }
+.picked .mono { font-family: var(--font-mono); }
 .checks { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-2); margin: 0; padding: 0; border: 0; font-size: var(--text-sm); }
 .checks legend { grid-column: 1 / -1; padding: 0 0 var(--space-1); }
 .checks label { display: flex; align-items: center; gap: var(--space-2); }

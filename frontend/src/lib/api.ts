@@ -1,5 +1,5 @@
 import type {
-  Album, AppConfig, CalendarYear, CloudStatus, CurateParams, CurateResult, DropPreview, DuplicateExact, PosterFile, PosterLayout, PosterOptions, DuplicateNear, FaceGroup, Job, LabelInfo, PhotoDetail, PhotoList,
+  Album, AppConfig, CalendarYear, CloudStatus, CurateParams, CurateResult, DropPreview, DuplicateExact, EnhanceOptions, ExportPreviewShot, ExportRequest, PosterFile, PosterLayout, PosterOptions, DuplicateNear, FaceGroup, Job, LabelInfo, PhotoDetail, PhotoList,
   ExcludedFile, LibraryRoots, RemoveResult, RenameBatch, RenamePreview, SimilarHit, Status, Subject, SuggestionGroup,
 } from './types'
 
@@ -107,6 +107,11 @@ export const api = {
   posterLayout: (uids: string[], options: PosterOptions) => post<PosterLayout>('/api/posters/layout', { uids, ...options }),
   createPoster: (uids: string[], options: PosterOptions, title: string, album: string) =>
     post<{ job: number; name: string; folder: string }>('/api/posters', { uids, ...options, title, album }),
+  exportPhotos: (body: ExportRequest) => post<{ job: number; folder: string }>('/api/exports', body),
+  exportDefaultDir: (title: string) => get<{ folder: string }>(`/api/exports/default-dir${queryString({ title })}`),
+  exportPreview: (uids: string[], enhance: EnhanceOptions) => post<{ photos: ExportPreviewShot[] }>('/api/exports/preview', { uids, enhance }),
+  revealExport: (job: number) => request<void>('POST', `/api/exports/${job}/reveal`, {}),
+  pickFolder: (start: string) => post<{ folder: string | null }>('/api/dialog/folder', { start }),
   revealPoster: (album: string, name: string) => request<void>('POST', `/api/albums/${album}/posters/${encodeURIComponent(name)}/reveal`, {}),
   openPoster: (album: string, name: string) => request<void>('POST', `/api/albums/${album}/posters/${encodeURIComponent(name)}/open`, {}),
 
@@ -120,6 +125,19 @@ export const thumbUrl = (hash: string | null | undefined, size = 'fit_720') => (
 export const originalUrl = (uid: string) => `/api/files/${uid}/original`
 export const videoUrl = (uid: string) => `/api/videos/${uid}`
 export const liveUrl = (uid: string) => `/api/live/${uid}`
+const PAGE = 500
+
+/** Tutti gli uid di una ricerca (per esempio `album:<uid>`), a pagine, fino a `limit`: servono a esportare un album. */
+export async function allUids(q: string, limit = 5000): Promise<string[]> {
+  const uids: string[] = []
+  for (let offset = 0; offset < limit; offset += PAGE) {
+    const page = await api.photos({ q, count: Math.min(PAGE, limit - offset), offset })
+    uids.push(...page.photos.map((p) => p.uid))
+    if (page.photos.length < PAGE || uids.length >= page.total) break
+  }
+  return uids
+}
+
 export const posterUrl = (album: string, name: string) => `/api/albums/${album}/posters/${encodeURIComponent(name)}`
 export const cropUrl = (marker: string, size = 96) => `/api/markers/${marker}/crop?size=${size}`
 

@@ -67,6 +67,31 @@ class PosterRequest(BaseModel):
     album: str = Field(default="", max_length=64)  # album di riferimento: il poster si salva lì (D-27)
 
 
+class EnhanceOptions(BaseModel):
+    light: bool = True
+    contrast: bool = True
+    vivid: bool = True
+    harmonize: bool = True
+    strength: Literal["light", "medium", "strong"] = "medium"
+
+
+class ExportRequest(BaseModel):
+    uids: Uids = Field(min_length=1, max_length=5000)
+    dest: str = Field(min_length=1, max_length=500)
+    raw: bool = False
+    videos: bool = True
+    enhance: EnhanceOptions | None = None
+
+
+class ExportPreview(BaseModel):
+    uids: Uids = Field(min_length=1, max_length=5000)
+    enhance: EnhanceOptions = Field(default_factory=EnhanceOptions)
+
+
+class FolderPick(BaseModel):
+    start: str = Field(default="", max_length=500)
+
+
 class DropPaths(BaseModel):
     paths: list[str] = Field(min_length=1, max_length=500)
 

@@ -3,10 +3,11 @@ import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import Dialog from '../components/Dialog.vue'
 import Dropdown from '../components/Dropdown.vue'
+import ExportDialog from '../components/ExportDialog.vue'
 import Icon from '../components/Icon.vue'
 import PageFrame from '../components/PageFrame.vue'
 import PhotoGrid from '../components/PhotoGrid.vue'
-import { api } from '../lib/api'
+import { allUids, api } from '../lib/api'
 import { formatCount } from '../lib/format'
 import { currentAlbum, currentSection, openCurate, sidebar } from '../lib/store'
 import { SECTION_OF } from '../lib/nav'
@@ -24,6 +25,18 @@ const newTitle = ref('')
 const story = ref('')
 const savingStory = ref(false)
 const regenerating = ref(false)
+const exportUids = ref<string[]>([])
+const exporting = ref(false)
+
+async function askExport(): Promise<void> {
+  if (!album.value) return
+  try {
+    exportUids.value = await allUids(`album:${album.value.uid}`)
+    exporting.value = true
+  } catch (error) {
+    toast(errorMessage(error), 'error')
+  }
+}
 
 async function load(): Promise<void> {
   missing.value = false
@@ -111,6 +124,7 @@ watch(() => route.params.uid, load)
               :aria-expanded="sidebar.panel === 'curate'" @click="openCurate({ uid: album.uid, title: album.title })">
         <Icon name="wand" /> Crea selezione
       </button>
+      <button type="button" class="btn" data-test="album-export" :disabled="album.photo_count === 0" @click="askExport"><Icon name="download" /> Esporta</button>
       <button type="button" class="btn icon" :class="{ active: album.favorite }" :aria-pressed="album.favorite" aria-label="Album preferito" @click="toggleFavorite"><Icon name="heart" /></button>
       <Dropdown label="Azioni sull'album">
         <button type="button" class="menu-item" role="menuitem" @click="renaming = true"><Icon name="edit" /> Rinomina</button>
@@ -131,6 +145,7 @@ watch(() => route.params.uid, load)
       </div>
     </section>
     <SavedWork :album="album" />
+    <ExportDialog :open="exporting" :uids="exportUids" :title="album.title" @close="exporting = false" />
     <PhotoGrid :query="`album:${album.uid}`" empty-title="Album vuoto" empty-text="Seleziona alcune foto in Esplora e aggiungile a questo album." />
 
     <Dialog :open="renaming" title="Rinomina l'album" size="sm" @close="renaming = false">

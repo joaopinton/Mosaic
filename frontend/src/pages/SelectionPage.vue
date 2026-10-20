@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import Dialog from '../components/Dialog.vue'
+import ExportDialog from '../components/ExportDialog.vue'
 import Icon from '../components/Icon.vue'
 import PageFrame from '../components/PageFrame.vue'
 import PhotoGrid from '../components/PhotoGrid.vue'
@@ -24,6 +25,7 @@ const missing = ref(false)
 const saving = ref(false)
 const saveTitle = ref('')
 const posterOpen = ref(false)
+const exportOpen = ref(false)
 const posterUids = computed(() => photos.value.map((p) => p.uid))
 let generation = 0
 
@@ -113,6 +115,7 @@ async function save(): Promise<void> {
       <button type="button" class="btn" :disabled="loading || !photos.length" @click="regenerate"><Icon name="shuffle" /> Rigenera</button>
       <button type="button" class="btn" :disabled="!photos.length" @click="selectAll"><Icon name="check" /> Seleziona tutte</button>
       <button type="button" class="btn" :disabled="!photos.length" data-test="poster-open" @click="posterOpen = true"><Icon name="grid" /> Crea poster</button>
+      <button type="button" class="btn" :disabled="!photos.length" data-test="selection-export" @click="exportOpen = true"><Icon name="download" /> Esporta</button>
       <button type="button" class="btn primary" :disabled="!photos.length" data-test="save-selection" @click="askSave"><Icon name="album" /> Salva nell'album</button>
     </template>
 
@@ -164,6 +167,7 @@ async function save(): Promise<void> {
       <PhotoGrid v-else :items="photos" :hints="hints" />
     </template>
 
+    <ExportDialog :open="exportOpen" :uids="posterUids" :title="`Selezione di ${album?.title ?? 'Mosaic'}`" @close="exportOpen = false" />
     <PosterDialog v-if="album" :open="posterOpen" :uids="posterUids" :title="album.title" :album="album.uid" @close="posterOpen = false" />
 
     <Dialog :open="saving" title="Salva la selezione" size="sm" @close="saving = false">

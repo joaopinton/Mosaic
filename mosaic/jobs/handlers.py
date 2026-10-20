@@ -229,6 +229,24 @@ def h_poster(ctx: Context, job: Job, ctl: JobControl) -> None:
     ctl.progress(1.0, f"Poster salvato in {out} ({dpi} dpi)")
 
 
+def h_export(ctx: Context, job: Job, ctl: JobControl) -> None:
+    """Foto copiate (o migliorate) in una cartella a scelta (D-30), una alla volta con il progresso."""
+    from mosaic.organize import enhance, export_photos
+
+    payload = job.payload
+    look = payload.get("enhance")
+    opts = export_photos.Options(raw=bool(payload.get("raw")), videos=bool(payload.get("videos", True)),
+                                 enhance=enhance.Options(**look) if look else None)
+    result = export_photos.export(ctx, list(payload["uids"]), Path(payload["dest"]), opts,
+                                  progress=lambda done, total, label: ctl.progress(done / max(total, 1), label, done, total),
+                                  cancel=ctl.cancel)
+    for error in result.errors:
+        ctx.db.log_error("export", "", error)
+    better = f", {result.enhanced} migliorate" if result.enhanced else ""
+    problems = f", {len(result.errors)} con problemi" if result.errors else ""
+    ctl.progress(1.0, f"{result.copied} foto esportate in {result.folder}{better}{problems}")
+
+
 def h_cleanup(ctx: Context, job: Job, ctl: JobControl) -> None:
     from mosaic.organize import cleanup
 
@@ -246,7 +264,7 @@ def h_unlink(ctx: Context, job: Job, ctl: JobControl) -> None:
 
 def build_handlers() -> dict[str, Handler]:
     return {
-        "index": h_index, "drop": h_drop, "poster": h_poster, "process": h_process, "analyze": h_analyze, "faces": h_faces, "moments": h_moments,
+        "index": h_index, "drop": h_drop, "poster": h_poster, "export": h_export, "process": h_process, "analyze": h_analyze, "faces": h_faces, "moments": h_moments,
         "caption": h_caption, "rename": h_rename, "rollback": h_rollback, "transcode": h_transcode,
         "import": h_import, "cleanup": h_cleanup, "backup": h_backup, "unlink": h_unlink,
     }

@@ -5,8 +5,8 @@ import Icon from '../components/Icon.vue'
 import PageFrame from '../components/PageFrame.vue'
 import PhotoGrid from '../components/PhotoGrid.vue'
 import { formatCount } from '../lib/format'
-import { chipLabel, parseQuery, removeChip } from '../lib/query'
-import { pushHistory } from '../lib/store'
+import { chipLabel, parseQuery, removeChip, type Chip } from '../lib/query'
+import { pushHistory, sidebar } from '../lib/store'
 
 // Ricerca: testo libero (semantico + parole) e filtri `chiave:valore` mostrati come chip rimovibili.
 const route = useRoute()
@@ -27,8 +27,19 @@ function submit(next = input.value): void {
   void router.push({ path: '/search', query: { q: text } })
 }
 
-function drop(chip: ReturnType<typeof parseQuery>['chips'][number]): void {
-  submit(removeChip(q.value, chip))
+// Togliendo l'ultimo filtro la query resta vuota: si torna alla ricerca senza `q`.
+function go(next: string): void {
+  if (next) submit(next)
+  else void router.push({ path: '/search' })
+}
+
+function drop(chip: Chip): void {
+  go(removeChip(q.value, chip))
+}
+
+/** Toglie tutti i filtri e lascia il testo libero. */
+function clearAll(): void {
+  go(parsed.value.chips.reduce((rest, chip) => removeChip(rest, chip), q.value))
 }
 </script>
 
@@ -39,10 +50,14 @@ function drop(chip: ReturnType<typeof parseQuery>['chips'][number]): void {
       <input v-model="input" class="field-input" type="search" placeholder="Cerca per contenuto o con filtri…" aria-label="Cerca nella libreria" autocomplete="off" />
       <button type="submit" class="btn primary">Cerca</button>
     </form>
-    <div v-if="parsed.chips.length" class="chips" aria-label="Filtri attivi">
-      <span v-for="c in parsed.chips" :key="c.raw" class="chip accent">
-        {{ chipLabel(c) }}<button type="button" :aria-label="`Togli il filtro ${c.key}`" @click="drop(c)"><Icon name="x" :size="12" /></button>
+    <div v-if="q" class="chips" aria-label="Filtri attivi">
+      <span v-for="(c, i) in parsed.chips" :key="`${i}:${c.raw}`" class="chip accent">
+        {{ chipLabel(c) }}<button type="button" :aria-label="`Togli il filtro ${chipLabel(c)}`" @click="drop(c)"><Icon name="x" :size="12" /></button>
       </span>
+      <button type="button" class="btn ghost sm" data-test="add-filter" :aria-expanded="sidebar.panel === 'filters'" @click="sidebar.panel = 'filters'">
+        <Icon name="plus" :size="14" /> Filtro
+      </button>
+      <button v-if="parsed.chips.length > 1" type="button" class="btn ghost sm" data-test="clear-filters" @click="clearAll">Togli tutti</button>
     </div>
 
     <div v-if="!q" class="empty">

@@ -3,9 +3,11 @@ import { onBeforeUnmount, onMounted, ref } from 'vue'
 import Icon from './Icon.vue'
 
 // Menu a tendina: si chiude con Esc, con un clic fuori o scegliendo una voce.
-withDefaults(defineProps<{ label: string; icon?: string; align?: 'left' | 'right'; btnClass?: string }>(), {
+// `placement="up"` apre il menu sopra il pulsante (per esempio nella barra in fondo allo schermo).
+withDefaults(defineProps<{ label: string; icon?: string; align?: 'left' | 'right'; placement?: 'down' | 'up'; btnClass?: string }>(), {
   icon: 'more',
   align: 'right',
+  placement: 'down',
   btnClass: 'btn ghost icon sm',
 })
 
@@ -38,7 +40,7 @@ onBeforeUnmount(() => {
     <button type="button" :class="btnClass" :aria-label="label" aria-haspopup="menu" :aria-expanded="open" @click="open = !open">
       <slot name="button"><Icon :name="icon" /></slot>
     </button>
-    <div v-if="open" class="menu" :class="align" role="menu" @click="open = false">
+    <div v-if="open" class="menu" :class="[align, placement]" role="menu" @click="open = false">
       <slot />
     </div>
   </div>
@@ -46,7 +48,8 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .dd { position: relative; display: inline-flex; }
-.menu { top: calc(100% + var(--space-1)); }
+.menu.down { top: calc(100% + var(--space-1)); }
+.menu.up { bottom: calc(100% + var(--space-1)); transform-origin: bottom; }
 .menu.right { right: 0; }
 .menu.left { left: 0; }
 </style>

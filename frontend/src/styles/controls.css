@@ -91,6 +91,9 @@ input[type="range"] { accent-color: var(--accent); }
   position: absolute;
   z-index: var(--z-overlay);
   min-width: 11rem;
+  max-height: min(60dvh, 28rem);
+  overflow-y: auto;
+  overscroll-behavior: contain;
   padding: var(--space-1);
   border: 1px solid var(--border-default);
   border-radius: var(--radius-panel);

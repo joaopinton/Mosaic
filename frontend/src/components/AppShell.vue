@@ -109,6 +109,9 @@ onBeforeUnmount(() => cleanup.forEach((fn) => fn()))
     <Dialog v-if="!regular" :open="sidebar.panel === 'activity'" title="Attività" variant="drawer" bare @close="sidebar.panel = null">
       <ActivityPanel @close="sidebar.panel = null" />
     </Dialog>
+    <Dialog v-if="!regular" :open="sidebar.panel === 'filters'" title="Filtri" variant="drawer" bare @close="sidebar.panel = null">
+      <FiltersPanel @close="sidebar.panel = null" />
+    </Dialog>
 
     <PhotoDetail :uid="photoUid" />
     <DropZone />

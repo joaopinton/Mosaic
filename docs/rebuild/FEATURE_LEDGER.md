@@ -124,6 +124,7 @@ Percorsi PP relativi alla radice del sorgente; percorsi M relativi a `_legacy/`.
 | ORG-09 | Migrazione del catalogo curato del vecchio Mosaic | M | `database/padova_moto_days.db` (334 righe, `sha256`, descrizione, tag, marca, modello) | `mosaic import-legacy`: abbina per SHA-256, fonte manuale (64) | 6 | fatto |
 | ORG-10 | Esportazione del catalogo JSON e CSV | M | `algoritmi/db_manager.py:122-150` | `mosaic export --format json\|csv`, senza gli embedding | 6 | fatto |
 | ORG-11 | Statistiche nell'intestazione | M | `web_app/index.html:670-674` | Conteggi per tipo, persone, etichette | 7 | fatto |
+| ORG-12 | Esporta foto in una cartella, con «Migliora luce e colori» | utente | — | D-30: barra della selezione, album e selezioni; job `export`; copie con il nome originale; miglioramento solo sulle copie | 9 | fatto |
 
 ## 8. Ricerca e similarità
 

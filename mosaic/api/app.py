@@ -11,7 +11,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from mosaic.api import routes_collections, routes_drop, routes_files, routes_library, routes_photos, routes_poster
+from mosaic.api import routes_collections, routes_drop, routes_export, routes_files, routes_library, routes_photos, routes_poster
 from mosaic.paths import FRONTEND_DIST
 from mosaic.service import Mosaic
 
@@ -62,7 +62,7 @@ def create_app(m: Mosaic, allowed_hosts: set[str] | None = None, dist: Path | No
                 return JSONResponse({"detail": "richiesta tra siti non consentita"}, status_code=403)
         response = await call_next(request)
         if (request.method in UNSAFE and response.status_code < 400 and request.url.path.startswith("/api/")
-                and not request.url.path.startswith(("/api/drop/", "/api/posters"))
+                and not request.url.path.startswith(("/api/drop/", "/api/posters", "/api/exports", "/api/dialog/"))
                 and not request.url.path.endswith(("/reveal", "/open"))):
             m.runner.submit("backup", {}, unique=True)  # ogni modifica manuale finisce nel backup YAML
         response.headers.setdefault("X-Content-Type-Options", "nosniff")
@@ -70,7 +70,7 @@ def create_app(m: Mosaic, allowed_hosts: set[str] | None = None, dist: Path | No
         return response
 
     for router in (routes_photos.router, routes_collections.router, routes_library.router, routes_files.router,
-                   routes_drop.router, routes_poster.router):
+                   routes_drop.router, routes_poster.router, routes_export.router):
         app.include_router(router)
 
     assets_dir = dist / "assets"

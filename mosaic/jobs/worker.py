@@ -16,7 +16,7 @@ log = logging.getLogger(__name__)
 # Job leggeri: possono girare in parallelo. Tutti gli altri si escludono a vicenda
 # (con 8 GB di RAM, per esempio, SigLIP e l'LLM non devono mai convivere).
 # Il poster e il backup YAML (parte dopo ogni modifica manuale) non devono aspettare la fine di un'analisi lunga.
-PARALLEL_TYPES = {"process", "poster", "backup"}
+PARALLEL_TYPES = {"process", "poster", "backup", "export"}
 MAX_ATTEMPTS = 2
 
 
