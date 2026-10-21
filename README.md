@@ -39,15 +39,18 @@ In più ci sono un motore di embedding moderno e un LLM locale incluso.
 Copia `dist/MosaicSetup.exe` (circa 4 MB) sul PC di destinazione e avvialo. L'installer:
 
 1. chiede in quale disco installare (servono circa 6 GB liberi, 4 GB senza LLM) e crea la sottocartella `Mosaic`;
-2. usa Python ≥ 3.12 se presente; altrimenti scarica l'installer ufficiale di Python 3.14.4 da python.org, ne verifica la firma digitale e lo installa dentro la cartella di Mosaic (senza toccare il PATH);
-3. crea `.venv` e installa le dipendenze;
-4. scarica e verifica con SHA-256 i modelli e i programmi portabili (SigLIP 2, YuNet, SFace, exiftool, ffmpeg, llama.cpp, Qwen2.5-VL-3B);
-5. controlla Microsoft Edge WebView2 (già presente su Windows 11) e, se manca, lo installa dal sito Microsoft dopo averne verificato la firma;
-6. crea i collegamenti sul Desktop e nel menu Start, registra la disinstallazione in Impostazioni > App e avvia Mosaic.
+2. controlla il PC (Windows 10/11 a 64 bit, spazio, RAM, rete e proxy, componenti Visual C++) e si adatta: con poca RAM o poco spazio salta il modello LLM, che si può aggiungere dopo rilanciando l'installazione;
+3. cerca un Python **3.12-3.14** a 64 bit (launcher `py`, registro, `PATH`, cartelle comuni). Uno più nuovo (3.15) o più vecchio, quello del Microsoft Store o uno a 32 bit si scartano, perché numpy, onnxruntime e rawpy non hanno le ruote per le altre versioni. Se non ce n'è uno adatto, o se con quello trovato le dipendenze non si installano, scarica l'installer ufficiale di Python 3.14.4 da python.org, ne verifica la firma digitale e lo installa dentro la cartella di Mosaic (senza toccare il PATH); se anche questo non riesce prova con winget;
+4. crea `.venv` (la ricrea se il suo Python è sparito) e installa le dipendenze, con nuovi tentativi in caso di rete instabile, poi controlla che si carichino davvero;
+5. scarica e verifica con SHA-256 i modelli e i programmi portabili (SigLIP 2, YuNet, SFace, exiftool, ffmpeg, llama.cpp, Qwen2.5-VL-3B);
+6. controlla Microsoft Edge WebView2 (già presente su Windows 11) e, se manca, lo installa dal sito Microsoft dopo averne verificato la firma;
+7. crea i collegamenti sul Desktop e nel menu Start, registra la disinstallazione in Impostazioni > App e avvia Mosaic.
 
 Serve la connessione a Internet solo durante l'installazione. Windows SmartScreen può avvisare perché l'exe non è firmato: "Ulteriori informazioni" → "Esegui comunque". Il log è in `setup.log` nella cartella di installazione. Se un download si interrompe, rilancia `setup.ps1` dalla cartella installata: riprende da dove era arrivato.
 
-Opzioni di `setup.ps1`: `-InstallDir <cartella>`, `-NoLLM`, `-SkipAssets`, `-Check` (solo controllo), `-Quiet`.
+Opzioni di `setup.ps1`: `-InstallDir <cartella>`, `-PythonPath <python.exe>` (usa un Python scelto da te, 3.12-3.14), `-NoLLM`, `-SkipAssets`, `-Check` (solo controllo: mostra PC, Python adatti e quelli scartati con il motivo), `-Quiet`.
+
+Se l'installazione fallisce, il messaggio dice perché e una copia del log è sul Desktop (`mosaic-setup-log.txt`).
 
 ```bash
 powershell -ExecutionPolicy Bypass -File setup.ps1 -Check

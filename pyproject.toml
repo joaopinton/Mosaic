@@ -1,6 +1,6 @@
 [project]
 name = "mosaic"
-version = "2.1.0"
+version = "2.1.1"
 description = "Gestore di foto e video completamente locale, con ricerca semantica, volti e descrizioni AI."
 requires-python = ">=3.12"
 readme = "README.md"

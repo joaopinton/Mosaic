@@ -6,8 +6,11 @@
     Idempotente: si può rilanciare per riprendere o aggiornare l'installazione.
     - Dentro MosaicSetup.exe: chiede il disco di destinazione, estrae payload.zip e installa.
     - Dalla cartella del progetto: installa sul posto.
+    Si adatta al PC: controlla Windows, spazio, RAM e rete; usa un Python già presente solo se è di una versione
+    che le dipendenze supportano (3.12-3.14) e, se non funziona, ne installa uno suo dentro la cartella di Mosaic.
 
 .PARAMETER InstallDir  Cartella di installazione (se omessa, la sceglie una finestra di dialogo).
+.PARAMETER PythonPath  Python da usare al posto di quello trovato da sé (percorso di python.exe, versione 3.12-3.14).
 .PARAMETER NoLLM       Non scarica llama.cpp e il modello Qwen2.5-VL (circa 2,8 GB).
 .PARAMETER SkipAssets  Salta il download di modelli e programmi portabili.
 .PARAMETER Check       Controlla solo i prerequisiti, senza installare nulla.
@@ -16,6 +19,7 @@
 [CmdletBinding()]
 param(
     [string]$InstallDir,
+    [string]$PythonPath,
     [switch]$NoLLM,
     [switch]$SkipAssets,
     [switch]$Check,
@@ -24,14 +28,22 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
-[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+try {
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]'Tls12, Tls13'
+} catch {
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+}
 
 $PythonVersion = '3.14.4'
 $PythonUrl = "https://www.python.org/ftp/python/$PythonVersion/python-$PythonVersion-amd64.exe"
 $MinPython = [version]'3.12'
+$MaxPython = [version]'3.14'   # numpy, onnxruntime, rawpy e le altre dipendenze native hanno le ruote solo fino alla 3.14
+$VCRedistUrl = 'https://aka.ms/vs/17/release/vc_redist.x64.exe'
+$LLMMinRamGB = 6
 $Here = Split-Path -Parent $MyInvocation.MyCommand.Path
 $Payload = Join-Path $Here 'payload.zip'
 $script:LogFile = $null
+$script:SkipLLM = [bool]$NoLLM
 
 function Write-Log([string]$Text) {
     if ($script:LogFile) {
@@ -50,12 +62,150 @@ function Write-Warn([string]$Text) {
     Write-Log "ATTENZIONE: $Text"
 }
 
+function Write-Info([string]$Text) {
+    Write-Host $Text
+    Write-Log $Text
+}
+
 function Get-FreeGB([string]$Path) {
     try {
         $root = [IO.Path]::GetPathRoot([IO.Path]::GetFullPath($Path))
         return [math]::Round((New-Object IO.DriveInfo($root)).AvailableFreeSpace / 1GB, 1)
     } catch {
         return $null
+    }
+}
+
+# --- il PC ----------------------------------------------------------------------------------------------
+
+function Get-SystemDir {
+    # un PowerShell a 32 bit su Windows a 64 bit vedrebbe in System32 le DLL a 32 bit
+    if ([Environment]::Is64BitOperatingSystem -and -not [Environment]::Is64BitProcess) { return (Join-Path $env:SystemRoot 'Sysnative') }
+    return (Join-Path $env:SystemRoot 'System32')
+}
+
+function Test-VCRuntime {
+    $sys = Get-SystemDir
+    return (Test-Path (Join-Path $sys 'vcruntime140_1.dll')) -and (Test-Path (Join-Path $sys 'msvcp140.dll'))
+}
+
+function Set-Proxy {
+    # Invoke-WebRequest usa già il proxy di sistema; pip e gli script Python no: gli si passa lo stesso
+    try {
+        [Net.WebRequest]::DefaultWebProxy.Credentials = [Net.CredentialCache]::DefaultNetworkCredentials
+        $uri = [Uri]'https://pypi.org'
+        $proxy = [Net.WebRequest]::GetSystemWebProxy().GetProxy($uri)
+        if ($proxy -and $proxy.Host -ne $uri.Host -and -not $env:HTTPS_PROXY) {
+            $env:HTTPS_PROXY = $proxy.AbsoluteUri
+            $env:HTTP_PROXY = $proxy.AbsoluteUri
+            Write-Log "Proxy di sistema: $($proxy.AbsoluteUri)"
+        }
+    } catch {
+        Write-Log "Proxy non letto: $($_.Exception.Message)"
+    }
+}
+
+function Test-Host([string]$Name) {
+    try {
+        Invoke-WebRequest -Uri "https://$Name/" -Method Head -UseBasicParsing -TimeoutSec 6 | Out-Null
+        return $true
+    } catch {
+        return $null -ne $_.Exception.Response  # il sito ha risposto (anche con un errore): la rete c'è
+    }
+}
+
+function Get-Machine([string]$Dir) {
+    $os = Get-CimInstance Win32_OperatingSystem -ErrorAction SilentlyContinue
+    $ram = (Get-CimInstance Win32_ComputerSystem -ErrorAction SilentlyContinue).TotalPhysicalMemory
+    $arch = if ($env:PROCESSOR_ARCHITEW6432) { $env:PROCESSOR_ARCHITEW6432 } else { $env:PROCESSOR_ARCHITECTURE }
+    return [pscustomobject]@{
+        Windows = if ($os) { "$($os.Caption) (build $($os.BuildNumber))" } else { [Environment]::OSVersion.VersionString }
+        Build   = [Environment]::OSVersion.Version.Build
+        Is64    = [Environment]::Is64BitOperatingSystem
+        Arch    = $arch
+        RamGB   = if ($ram) { [math]::Round($ram / 1GB, 1) } else { $null }
+        FreeGB  = Get-FreeGB $Dir
+        PS      = $PSVersionTable.PSVersion.ToString()
+        VCRuntime = Test-VCRuntime
+    }
+}
+
+# Controlli che non dipendono da Python. Ritorna i problemi che bloccano e gli avvisi (che si risolvono da sé o si segnalano).
+function Test-Machine([string]$Dir, [bool]$NeedNetwork = $true) {
+    $m = Get-Machine $Dir
+    $problems = @()
+    $warnings = @()
+    Write-Info ("Windows             : {0}, {1}" -f $m.Windows, $m.Arch)
+    Write-Info ("PowerShell          : {0}" -f $m.PS)
+    Write-Info ("RAM                 : {0} GB" -f $m.RamGB)
+    Write-Info ("Spazio libero       : {0} GB" -f $m.FreeGB)
+    if (-not $m.Is64 -or $m.Arch -eq 'x86') { $problems += 'Mosaic richiede Windows a 64 bit.' }
+    if ($m.Build -lt 10240) { $problems += 'Mosaic richiede Windows 10 o Windows 11 (Python 3.12+ non funziona su versioni precedenti).' }
+    if ($m.Arch -eq 'ARM64') { $warnings += 'PC con processore ARM: uso Python x64 in emulazione (più lento, ma funziona).' }
+    if ($null -ne $m.RamGB -and $m.RamGB -lt $LLMMinRamGB -and -not $script:SkipLLM) {
+        $script:SkipLLM = $true
+        $warnings += "Solo $($m.RamGB) GB di RAM: salto il modello LLM locale (serve a scrivere le descrizioni delle foto e sotto $LLMMinRamGB GB sarebbe troppo lento). Ricerca, volti e album funzionano lo stesso."
+    }
+    if ($Dir -match '(?i)\\OneDrive\b') { $warnings += 'La cartella è sincronizzata con OneDrive: con migliaia di file e il database può rallentare o dare errori. Meglio una cartella fuori da OneDrive.' }
+    if ($Dir.Length -gt 90) { $warnings += 'Il percorso di installazione è molto lungo: scegli una cartella più corta se compaiono errori sui nomi dei file.' }
+    if ($NeedNetwork) {
+        Set-Proxy
+        $offline = -not (Test-Host 'pypi.org') -or -not (Test-Host 'files.pythonhosted.org')
+        if ($offline) {
+            $problems += 'Non riesco a raggiungere pypi.org: serve Internet (o il proxy dell''azienda) per scaricare le dipendenze. Controlla la connessione, il proxy o l''antivirus e riprova.'
+        } else {
+            foreach ($site in 'github.com', 'huggingface.co') {
+                if (-not (Test-Host $site)) { $warnings += "$site non raggiungibile: il download dei modelli potrebbe non riuscire (rete filtrata?)." }
+            }
+        }
+    }
+    if (-not $m.VCRuntime) { $warnings += 'Mancano i componenti Microsoft Visual C++ 2015-2022: li installo da solo (Windows può chiedere il permesso).' }
+    foreach ($w in $warnings) { Write-Warn $w }
+    foreach ($p in $problems) { Write-Host "ERRORE: $p" -ForegroundColor Red; Write-Log "ERRORE: $p" }
+    return [pscustomobject]@{ Problems = $problems; Warnings = $warnings; Machine = $m }
+}
+
+# --- download -------------------------------------------------------------------------------------------
+
+function Get-File([string]$Url, [string]$Out, [int]$Tries = 3) {
+    for ($i = 1; $i -le $Tries; $i++) {
+        try {
+            Invoke-WebRequest -Uri $Url -OutFile $Out -UseBasicParsing -TimeoutSec 900
+            if ((Test-Path $Out) -and (Get-Item $Out).Length -gt 0) { return }
+        } catch {
+            Write-Log "Download $i/$Tries di ${Url}: $($_.Exception.Message)"
+            Start-Sleep -Seconds (2 * $i)
+        }
+    }
+    $curl = Get-Command curl.exe -ErrorAction SilentlyContinue  # incluso in Windows 10 dalla 1803
+    if ($curl) {
+        & $curl.Source -L --fail --retry 3 --silent --show-error -o $Out $Url
+        if ($LASTEXITCODE -eq 0 -and (Test-Path $Out) -and (Get-Item $Out).Length -gt 0) { return }
+    }
+    throw "Download non riuscito: $Url (controlla la connessione, il proxy o l'antivirus)."
+}
+
+function Assert-Signature([string]$Path, [string]$Signer) {
+    $sig = Get-AuthenticodeSignature $Path
+    if ($sig.Status -ne 'Valid' -or $sig.SignerCertificate.Subject -notmatch $Signer) {
+        Remove-Item $Path -Force -ErrorAction SilentlyContinue
+        throw "La firma digitale di $(Split-Path $Path -Leaf) non è valida (stato: $($sig.Status))."
+    }
+}
+
+function Install-VCRuntime {
+    Write-Step 'Componenti Microsoft Visual C++ (servono a numpy, OpenCV e onnxruntime)'
+    $setup = Join-Path $env:TEMP 'vc_redist.x64.exe'
+    try {
+        Get-File $VCRedistUrl $setup
+        Assert-Signature $setup 'Microsoft Corporation'
+        $proc = Start-Process -FilePath $setup -ArgumentList '/install', '/quiet', '/norestart' -Verb RunAs -Wait -PassThru
+        if ($proc.ExitCode -notin 0, 1638, 3010) { throw "codice $($proc.ExitCode)" }
+        Write-Info 'Componenti Visual C++ installati.'
+    } catch {
+        Write-Warn "Visual C++ non installato ($($_.Exception.Message)). Se Mosaic non parte, installa 'Microsoft Visual C++ Redistributable x64' da https://aka.ms/vs/17/release/vc_redist.x64.exe"
+    } finally {
+        Remove-Item $setup -Force -ErrorAction SilentlyContinue
     }
 }
 
@@ -80,57 +230,114 @@ function Select-InstallDir {
     return (Join-Path $picked 'Mosaic')
 }
 
+# --- Python ---------------------------------------------------------------------------------------------
+
+# Prova un interprete: ritorna @{Ok; Path; Version; Why}. Accetta solo 64 bit x64, 3.12-3.14, con venv e ensurepip.
 function Test-Python([string]$Exe, [string[]]$Pre = @()) {
-    if (-not (Test-Path $Exe) -and -not (Get-Command $Exe -ErrorAction SilentlyContinue)) { return $null }
+    $none = [pscustomobject]@{ Ok = $false; Path = $null; Version = $null; Why = 'non trovato' }
+    if (-not (Test-Path $Exe) -and -not (Get-Command $Exe -ErrorAction SilentlyContinue)) { return $none }
+    $previous = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
     try {
-        $probe = "import sys, venv, ensurepip; print('%d.%d|%d|%s' % (sys.version_info[0], sys.version_info[1], int(sys.maxsize > 2**32), sys.executable))"
+        $probe = "import sys, platform, importlib.util as u; print('%d.%d|%d|%s|%d|%s' % (sys.version_info[0], sys.version_info[1], int(sys.maxsize > 2**32), platform.machine(), int(bool(u.find_spec('venv') and u.find_spec('ensurepip'))), sys.executable))"
         $out = & $Exe @Pre -c $probe 2>$null
-        if ($LASTEXITCODE -ne 0 -or -not $out) { return $null }
-        $parts = ("$out").Trim().Split('|', 3)
-        if ([version]$parts[0] -lt $MinPython -or $parts[1] -ne '1') { return $null }
-        if ($parts[2] -match '\\WindowsApps\\') { return $null }
-        return $parts[2]
+        if ($LASTEXITCODE -ne 0 -or -not $out) { return $none }
+        $p = ("$out").Trim().Split('|', 5)
+        $version = [version]$p[0]
+        $why = $null
+        if ($p[4] -match '\\WindowsApps\\') { $why = 'è la versione del Microsoft Store (non adatta a creare ambienti virtuali)' }
+        elseif ($p[1] -ne '1') { $why = 'è a 32 bit' }
+        elseif ($p[2] -notin 'AMD64', 'x86_64') { $why = "ha architettura $($p[2]), servono le ruote x64" }
+        elseif ($p[3] -ne '1') { $why = 'manca venv/ensurepip (installazione incompleta)' }
+        elseif ($version -lt $MinPython) { $why = "è troppo vecchio (servono Python $MinPython-$MaxPython)" }
+        elseif ($version -gt $MaxPython) { $why = "è troppo nuovo: le dipendenze native non hanno ancora le ruote (servono Python $MinPython-$MaxPython)" }
+        return [pscustomobject]@{ Ok = (-not $why); Path = $p[4]; Version = $p[0]; Why = $why }
     } catch {
-        return $null
+        return $none
+    } finally {
+        $ErrorActionPreference = $previous
     }
 }
 
-function Find-Python([string]$Dir) {
-    $candidates = @(
-        @{ Exe = (Join-Path $Dir 'python\python.exe'); Pre = @() },
-        @{ Exe = 'py'; Pre = @('-3.14') },
-        @{ Exe = 'py'; Pre = @('-3.13') },
-        @{ Exe = 'py'; Pre = @('-3.12') },
-        @{ Exe = 'python'; Pre = @() }
-    )
-    foreach ($c in $candidates) {
-        $found = Test-Python $c.Exe $c.Pre
-        if ($found) { return $found }
+function Get-PythonCandidates([string]$Dir) {
+    $list = @()
+    if ($PythonPath) { $list += , @{ Exe = $PythonPath; Pre = @() } }
+    $list += , @{ Exe = (Join-Path $Dir 'python\python.exe'); Pre = @() }
+    foreach ($v in '3.14', '3.13', '3.12') { $list += , @{ Exe = 'py'; Pre = @("-$v") } }
+    foreach ($root in 'HKCU:\Software\Python\PythonCore', 'HKLM:\SOFTWARE\Python\PythonCore', 'HKLM:\SOFTWARE\WOW6432Node\Python\PythonCore') {
+        foreach ($v in '3.14', '3.13', '3.12') {
+            $key = "$root\$v\InstallPath"
+            $exe = (Get-ItemProperty -Path $key -ErrorAction SilentlyContinue).ExecutablePath
+            if (-not $exe) {
+                $base = (Get-ItemProperty -Path $key -ErrorAction SilentlyContinue).'(default)'
+                if ($base) { $exe = Join-Path $base 'python.exe' }
+            }
+            if ($exe) { $list += , @{ Exe = $exe; Pre = @() } }
+        }
     }
-    return $null
+    foreach ($v in '314', '313', '312') {
+        $list += , @{ Exe = (Join-Path $env:LOCALAPPDATA "Programs\Python\Python$v\python.exe"); Pre = @() }
+    }
+    $list += , @{ Exe = 'python'; Pre = @() }
+    $list += , @{ Exe = 'python3'; Pre = @() }
+    return $list
+}
+
+# Tutti i Python adatti (senza doppioni, nell'ordine di preferenza); i rifiutati finiscono nel log con il motivo.
+function Find-Pythons([string]$Dir) {
+    $seen = @{}
+    $good = @()
+    foreach ($c in (Get-PythonCandidates $Dir)) {
+        $r = Test-Python $c.Exe $c.Pre
+        if (-not $r.Path) { continue }
+        $key = $r.Path.ToLowerInvariant()
+        if ($seen.ContainsKey($key)) { continue }
+        $seen[$key] = $true
+        if ($r.Ok) {
+            $good += $r
+        } else {
+            Write-Log "Python $($r.Version) in $($r.Path) scartato: $($r.Why)"
+            if ($script:ShowRejected) { Write-Info "  scartato Python $($r.Version) ($($r.Path)): $($r.Why)" }
+        }
+    }
+    return $good
+}
+
+function Install-PythonWithWinget {
+    $winget = Get-Command winget.exe -ErrorAction SilentlyContinue
+    if (-not $winget) { return }
+    Write-Info 'Provo con winget...'
+    & $winget.Source install -e --id Python.Python.3.14 --scope user --silent --accept-package-agreements --accept-source-agreements 2>&1 |
+        ForEach-Object { Write-Log "$_" }
 }
 
 function Install-Python([string]$Dir) {
-    Write-Step "Python $PythonVersion non trovato: scarico l'installer ufficiale da python.org"
-    $installer = Join-Path $env:TEMP "python-$PythonVersion-amd64.exe"
-    Invoke-WebRequest -Uri $PythonUrl -OutFile $installer -UseBasicParsing
-    $sig = Get-AuthenticodeSignature $installer
-    if ($sig.Status -ne 'Valid' -or $sig.SignerCertificate.Subject -notmatch 'Python Software Foundation') {
-        Remove-Item $installer -Force
-        throw "La firma dell'installer di Python non è valida (stato: $($sig.Status))."
-    }
+    Write-Step "Installo Python $PythonVersion (ufficiale, da python.org) dentro la cartella di Mosaic"
     $target = Join-Path $Dir 'python'
-    Write-Host "Installo Python in $target (solo per questo utente, senza toccare il PATH)"
-    $proc = Start-Process -FilePath $installer -Wait -PassThru -ArgumentList @(
-        '/quiet', 'InstallAllUsers=0', 'PrependPath=0', 'Include_launcher=0',
-        'Include_test=0', 'Include_doc=0', 'AssociateFiles=0', 'Shortcuts=0',
-        "TargetDir=$target"
-    )
-    Remove-Item $installer -Force -ErrorAction SilentlyContinue
-    if ($proc.ExitCode -notin 0, 3010) { throw "L'installazione di Python è fallita (codice $($proc.ExitCode))." }
-    $exe = Join-Path $target 'python.exe'
-    if (-not (Test-Python $exe)) { throw 'Python installato ma non utilizzabile.' }
-    return $exe
+    $installer = Join-Path $env:TEMP "python-$PythonVersion-amd64.exe"
+    $pyLog = Join-Path $Dir 'python-install.log'
+    try {
+        Get-File $PythonUrl $installer
+        Assert-Signature $installer 'Python Software Foundation'
+        Write-Info "Installo Python in $target (solo per questo utente, senza toccare il PATH)"
+        $proc = Start-Process -FilePath $installer -Wait -PassThru -ArgumentList @(
+            '/quiet', '/log', "`"$pyLog`"", 'InstallAllUsers=0', 'PrependPath=0', 'Include_launcher=0',
+            'Include_test=0', 'Include_doc=0', 'AssociateFiles=0', 'Shortcuts=0', "TargetDir=$target"
+        )
+        if ($proc.ExitCode -notin 0, 3010) { throw "codice $($proc.ExitCode) (dettagli in $pyLog)" }
+        $r = Test-Python (Join-Path $target 'python.exe')
+        if (-not $r.Ok) { throw "Python installato ma non utilizzabile ($($r.Why))" }
+        return $r.Path
+    } catch {
+        Write-Warn "Installazione di Python da python.org non riuscita: $($_.Exception.Message)"
+        Install-PythonWithWinget
+        $found = @(Find-Pythons $Dir)
+        if ($found.Count) { return $found[0].Path }
+        throw ("Non riesco a installare Python. Installa a mano Python $MinPython-$MaxPython a 64 bit da https://www.python.org/downloads/ " +
+               "(non quello del Microsoft Store), poi rilancia l'installazione con:`n  setup.ps1 -PythonPath <percorso di python.exe>")
+    } finally {
+        Remove-Item $installer -Force -ErrorAction SilentlyContinue
+    }
 }
 
 function Invoke-Logged([string]$Exe, [string[]]$ArgList) {
@@ -145,6 +352,78 @@ function Invoke-Logged([string]$Exe, [string[]]$ArgList) {
     }
     if ($code -ne 0) { throw "Comando fallito (codice $code): $Exe $($ArgList -join ' ')" }
 }
+
+# Esegue un comando e ritorna il suo output (senza scriverlo a video); $null se fallisce.
+function Get-Output([string]$Exe, [string[]]$ArgList) {
+    $previous = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $out = & $Exe @ArgList 2>&1 | ForEach-Object { "$_" }
+        if ($LASTEXITCODE -ne 0) { Write-Log ($out -join "`n"); return $null }
+        return ($out -join "`n")
+    } finally {
+        $ErrorActionPreference = $previous
+    }
+}
+
+# L'ambiente virtuale esistente va bene se il suo Python parte e ha una versione supportata.
+function Test-Venv([string]$Venv) {
+    $exe = Join-Path $Venv 'Scripts\python.exe'
+    if (-not (Test-Path $exe)) { return $false }
+    $r = Test-Python $exe
+    return $r.Ok
+}
+
+$CoreImports = 'import numpy, scipy, PIL, cv2, onnxruntime, rawpy, yaml, fastapi, uvicorn, httpx, watchdog'
+
+function New-Environment([string]$Python, [string]$Venv, [string]$Requirements) {
+    $venvPython = Join-Path $Venv 'Scripts\python.exe'
+    if ((Test-Path $Venv) -and -not (Test-Venv $Venv)) {
+        Write-Warn 'L''ambiente virtuale esistente non è utilizzabile (Python spostato, disinstallato o di un''altra versione): lo ricreo.'
+        Remove-Item -Recurse -Force $Venv
+    }
+    if (-not (Test-Path $venvPython)) { Invoke-Logged $Python @('-m', 'venv', $Venv) }
+    $pipArgs = @('--progress-bar', 'off', '--disable-pip-version-check', '--retries', '5', '--timeout', '60')
+    Invoke-Logged $venvPython (@('-m', 'pip', 'install', '--upgrade', 'pip') + $pipArgs)
+    try {
+        Invoke-Logged $venvPython (@('-m', 'pip', 'install', '--prefer-binary', '-r', $Requirements) + $pipArgs)
+    } catch {
+        Write-Warn "Installazione delle dipendenze non riuscita, riprovo ($($_.Exception.Message))"
+        Start-Sleep -Seconds 3
+        Invoke-Logged $venvPython (@('-m', 'pip', 'install', '--prefer-binary', '-r', $Requirements) + $pipArgs)
+    }
+    # le librerie native non si caricano senza i componenti Visual C++: si installano e si riprova
+    $loaded = Get-Output $venvPython @('-c', $CoreImports)
+    if ($null -eq $loaded -and -not (Test-VCRuntime)) {
+        Install-VCRuntime
+        $loaded = Get-Output $venvPython @('-c', $CoreImports)
+    }
+    if ($null -eq $loaded) { throw 'Le librerie sono installate ma non si caricano (vedi setup.log).' }
+    return $venvPython
+}
+
+function Initialize-Environment([string]$Dir, [string]$Venv, [string]$Requirements) {
+    $tried = @()
+    foreach ($candidate in (Find-Pythons $Dir)) {
+        Write-Info "Provo con Python $($candidate.Version): $($candidate.Path)"
+        try {
+            return (New-Environment $candidate.Path $Venv $Requirements)
+        } catch {
+            Write-Warn "Con questo Python non ha funzionato: $($_.Exception.Message)"
+            $tried += $candidate.Path
+            if (Test-Path $Venv) { Remove-Item -Recurse -Force $Venv -ErrorAction SilentlyContinue }
+        }
+    }
+    $private = Join-Path $Dir 'python\python.exe'
+    if ($tried -contains $private -and (Test-Path $private)) {
+        throw 'Anche con il Python di Mosaic l''installazione delle dipendenze è fallita (vedi setup.log).'
+    }
+    $python = Install-Python $Dir
+    Write-Info "Uso $python"
+    return (New-Environment $python $Venv $Requirements)
+}
+
+# --- collegamenti, WebView2, disinstallazione ---------------------------------------------------------
 
 function New-Shortcut([string]$Path, [string]$Target, [string]$Dir) {
     $shell = New-Object -ComObject WScript.Shell
@@ -194,11 +473,8 @@ function Install-WebView2 {
     Write-Step 'Microsoft Edge WebView2 non trovato: lo installo'
     $setup = Join-Path $env:TEMP 'MicrosoftEdgeWebview2Setup.exe'
     try {
-        Invoke-WebRequest -Uri 'https://go.microsoft.com/fwlink/p/?LinkId=2124703' -OutFile $setup -UseBasicParsing
-        $sig = Get-AuthenticodeSignature $setup
-        if ($sig.Status -ne 'Valid' -or $sig.SignerCertificate.Subject -notmatch 'Microsoft Corporation') {
-            throw "firma non valida (stato: $($sig.Status))"
-        }
+        Get-File 'https://go.microsoft.com/fwlink/p/?LinkId=2124703' $setup
+        Assert-Signature $setup 'Microsoft Corporation'
         $proc = Start-Process -FilePath $setup -ArgumentList '/silent', '/install' -Wait -PassThru
         if ($proc.ExitCode -ne 0) { throw "codice $($proc.ExitCode)" }
         Write-Host 'WebView2 installato.'
@@ -209,6 +485,16 @@ function Install-WebView2 {
     }
 }
 
+function Get-AppVersion([string]$Dir) {
+    try {
+        $m = Select-String -Path (Join-Path $Dir 'pyproject.toml') -Pattern '^version\s*=\s*"([^"]+)"' | Select-Object -First 1
+        if ($m) { return $m.Matches[0].Groups[1].Value }
+    } catch {
+        Write-Log "Versione non letta: $($_.Exception.Message)"
+    }
+    return '2'
+}
+
 function Register-Uninstaller([string]$Dir) {
     $key = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Mosaic'
     $uninstall = Join-Path $Dir 'uninstall.ps1'
@@ -216,7 +502,7 @@ function Register-Uninstaller([string]$Dir) {
     New-Item -Path $key -Force | Out-Null
     $values = @{
         DisplayName     = 'Mosaic'
-        DisplayVersion  = '2.0.0'
+        DisplayVersion  = (Get-AppVersion $Dir)
         Publisher       = 'Mosaic'
         InstallLocation = $Dir
         DisplayIcon     = (Join-Path $Dir 'mosaic.ico')
@@ -231,12 +517,19 @@ function Register-Uninstaller([string]$Dir) {
 function Show-Check {
     Write-Step 'Controllo prerequisiti (nessuna modifica)'
     $dir = if ($InstallDir) { $InstallDir } else { $Here }
-    $python = Find-Python $dir
-    Write-Host ("Python >= {0}      : {1}" -f $MinPython, $(if ($python) { $python } else { "non trovato (verrà installato Python $PythonVersion)" }))
-    Write-Host ("payload.zip         : {0}" -f $(if (Test-Path $Payload) { 'presente' } else { 'assente (installazione sul posto)' }))
-    Write-Host ("assets.yaml         : {0}" -f $(if ((Test-Path (Join-Path $Here 'assets.yaml')) -or (Test-Path $Payload)) { 'ok' } else { 'MANCANTE' }))
-    Write-Host ("Spazio libero       : {0} GB su {1}" -f (Get-FreeGB $dir), [IO.Path]::GetPathRoot([IO.Path]::GetFullPath($dir)))
+    Test-Machine $dir | Out-Null
+    $script:ShowRejected = $true
+    $found = @(Find-Pythons $dir)
+    if ($found) {
+        Write-Info ("Python {0}-{1}  : {2} (versione {3})" -f $MinPython, $MaxPython, $found[0].Path, $found[0].Version)
+    } else {
+        Write-Info ("Python {0}-{1}  : nessuno adatto (verrà installato Python {2} dentro la cartella di Mosaic)" -f $MinPython, $MaxPython, $PythonVersion)
+    }
+    Write-Info ("payload.zip         : {0}" -f $(if (Test-Path $Payload) { 'presente' } else { 'assente (installazione sul posto)' }))
+    Write-Info ("assets.yaml         : {0}" -f $(if ((Test-Path (Join-Path $Here 'assets.yaml')) -or (Test-Path $Payload)) { 'ok' } else { 'MANCANTE' }))
 }
+
+if ($MyInvocation.InvocationName -eq '.') { return }  # caricato per i test: solo le funzioni
 
 try {
     Write-Host ''
@@ -253,9 +546,17 @@ try {
     $script:LogFile = Join-Path $InstallDir 'setup.log'
     Write-Log "Installazione in $InstallDir"
 
+    Write-Step 'Controllo del PC'
+    $machine = Test-Machine $InstallDir
+    if ($machine.Problems.Count) { throw ($machine.Problems -join ' ') }
+
     # con -SkipAssets non si scaricano modelli né programmi: bastano l'ambiente Python e le dipendenze
-    $needGB = if ($SkipAssets) { 1.5 } elseif ($NoLLM) { 4 } else { 6 }
-    $freeGB = Get-FreeGB $InstallDir
+    $freeGB = $machine.Machine.FreeGB
+    if (-not $SkipAssets -and -not $script:SkipLLM -and $null -ne $freeGB -and $freeGB -lt 6 -and $freeGB -ge 4) {
+        $script:SkipLLM = $true
+        Write-Warn "Spazio libero $freeGB GB: salto il modello LLM locale (2,8 GB). Per aggiungerlo dopo, libera spazio e rilancia l'installazione."
+    }
+    $needGB = if ($SkipAssets) { 1.5 } elseif ($script:SkipLLM) { 4 } else { 6 }
     Write-Host "Cartella: $InstallDir  (spazio libero: $freeGB GB, necessari circa $needGB GB)"
     if ($null -ne $freeGB -and $freeGB -lt $needGB) {
         Write-Warn 'Spazio libero insufficiente.'
@@ -267,17 +568,12 @@ try {
         Expand-Archive -LiteralPath $Payload -DestinationPath $InstallDir -Force
     }
 
-    Write-Step 'Python'
-    $python = Find-Python $InstallDir
-    if (-not $python) { $python = Install-Python $InstallDir }
-    Write-Host "Uso $python"
+    if (-not (Test-VCRuntime)) { Install-VCRuntime }
 
-    Write-Step 'Ambiente virtuale e dipendenze'
+    Write-Step 'Python, ambiente virtuale e dipendenze'
     $venv = Join-Path $InstallDir '.venv'
-    $venvPython = Join-Path $venv 'Scripts\python.exe'
-    if (-not (Test-Path $venvPython)) { Invoke-Logged $python @('-m', 'venv', $venv) }
-    Invoke-Logged $venvPython @('-m', 'pip', 'install', '--upgrade', 'pip', '--progress-bar', 'off')
-    Invoke-Logged $venvPython @('-m', 'pip', 'install', '-r', (Join-Path $InstallDir 'requirements.txt'), '--progress-bar', 'off')
+    $venvPython = Initialize-Environment $InstallDir $venv (Join-Path $InstallDir 'requirements.txt')
+    Write-Host "Ambiente pronto: $venvPython"
 
     if (-not $SkipAssets) {
         $env:MOSAIC_HOME = $InstallDir
@@ -285,7 +581,7 @@ try {
         try {
             Write-Step 'Modelli e programmi portabili (SigLIP 2, volti, exiftool, ffmpeg)'
             Invoke-Logged $venvPython @('-m', 'mosaic.assets', 'fetch', '--group', 'core')
-            if (-not $NoLLM) {
+            if (-not $script:SkipLLM) {
                 Write-Step 'LLM locale (llama.cpp + Qwen2.5-VL-3B, circa 2,8 GB)'
                 try {
                     Invoke-Logged $venvPython @('-m', 'mosaic.assets', 'fetch', '--group', 'llm')
@@ -320,6 +616,15 @@ try {
     Write-Host ''
     Write-Host "ERRORE: $($_.Exception.Message)" -ForegroundColor Red
     Write-Log "ERRORE: $($_.Exception.Message)"
-    if ($script:LogFile) { Write-Host "Dettagli in: $script:LogFile" }
+    if ($script:LogFile) {
+        Write-Host "Dettagli in: $script:LogFile"
+        try {
+            $copy = Join-Path ([Environment]::GetFolderPath('Desktop')) 'mosaic-setup-log.txt'
+            Copy-Item $script:LogFile $copy -Force
+            Write-Host "Ne ho messo una copia sul Desktop (mosaic-setup-log.txt): mandala per ricevere aiuto."
+        } catch {
+            Write-Log "Copia del log non riuscita: $($_.Exception.Message)"
+        }
+    }
     exit 1
 }
