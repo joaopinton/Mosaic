@@ -98,14 +98,22 @@ export interface Album {
   cover: string | null
   /** album da cui è nata questa selezione salvata (D-27) */
   source?: { uid: string; title: string; type: Album['type'] } | null
+  /** cartella sul disco di un album cartella; `root` solo per una cartella data alla libreria, che si può scollegare (D-32) */
+  path?: string | null
+  root?: string | null
+  /** cartella o momento con un nome dato a mano, che la rigenerazione non cambia (D-32) */
+  renamed?: boolean
 }
 
 export interface PosterFile { name: string; size: number; created: string }
 
 // --- esportazione in una cartella (D-30) ---
 export interface EnhanceOptions { light: boolean; contrast: boolean; vivid: boolean; harmonize: boolean; strength: 'light' | 'medium' | 'strong' }
-export interface ExportRequest { uids: string[]; dest: string; raw: boolean; videos: boolean; enhance: EnhanceOptions | null }
+/** Formato di «Ritaglia a formato» (D-34): rapporto w:h o, con `pixels`, misura esatta delle copie. */
+export interface CropFormat { w: number; h: number; pixels: boolean }
+export interface ExportRequest { uids: string[]; dest: string; raw: boolean; videos: boolean; enhance: EnhanceOptions | null; crop: CropFormat | null }
 export interface ExportPreviewShot { uid: string; before: string; after: string }
+export interface CropPreviewShot { uid: string; image: string; box: [number, number, number, number] }
 
 export interface LabelInfo { name: string; slug: string; category: string; count: number; cover: string | null }
 export interface Subject { uid: string; name: string; slug: string; photo_count: number; hidden: boolean; favorite: boolean; marker: string | null }
@@ -221,21 +229,32 @@ export interface CurateResult { album: Album; photos: CuratedPhoto[]; stats: Cur
 
 // --- trascina e rilascia (D-25) ---
 export type DropKind = 'folder' | 'media' | 'zip' | 'unsupported' | 'missing'
-export interface DropItem { path: string; name: string; kind: DropKind; size: number; media: number; in_library: boolean; contains_library: boolean }
+export interface DropItem {
+  path: string; name: string; kind: DropKind; size: number; media: number; in_library: boolean; contains_library: boolean
+  /** Voci che compariranno in «Cartelle» (sottocartelle e zip compresi), zip annidati, nome della cartella di arrivo (D-31). */
+  folders: number; zips: number; dest_name: string
+}
 export interface DropPreview { items: DropItem[]; dest: string | null }
 
 // --- poster a mosaico (D-26) ---
 export type PosterPaper = 'a4' | 'a3' | 'a2' | '30x40' | '50x70' | '70x100' | 'square'
 export type PosterStyle = 'mondrian' | 'gallery' | 'none'
 export type PosterLine = 'thin' | 'medium' | 'bold'
+export type PosterFont = 'bahnschrift' | 'georgia' | 'impact' | 'consolas'
+export type PosterCase = 'auto' | 'upper' | 'lower'
+/** Una scritta di un riquadro colorato (D-33): etichetta piccola facoltativa e valore grande. */
+export interface PosterFact { label: string; value: string }
 export interface PosterOptions {
   paper: PosterPaper; landscape: boolean; style: PosterStyle; line: PosterLine; colors: number; seed: number; dpi: number
   occasion: string; date: string; place: string
+  /** null = dati automatici dell'evento; altrimenti le scritte dell'utente, nell'ordine dei riquadri */
+  texts: PosterFact[] | null; font: PosterFont; case: PosterCase
 }
 /** Testo di un riquadro colorato: misure in frazioni dell'altezza del riquadro, righe già spezzate dal server. */
 export interface PosterText { fg: string; label: string; lines: string[]; value: number; label_size: number; pad: number }
 export interface PosterCell { x: number; y: number; w: number; h: number; uid: string | null; hash: string | null; color: string | null; crop: [number, number, number, number]; text: PosterText | null }
 export interface PosterLayout {
   width_mm: number; height_mm: number; pixels: [number, number]; dpi: number; line: number; ink: string; cells: PosterCell[]
-  facts: { label: string; value: string }[]
+  /** i dati automatici dell'evento, anche quando le scritte sono personalizzate */
+  font: PosterFont; facts: PosterFact[]
 }

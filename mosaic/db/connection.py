@@ -58,6 +58,10 @@ MIGRATIONS: list[tuple[int, str]] = [
         ALTER TABLE albums ADD COLUMN source TEXT NOT NULL DEFAULT '';
         CREATE INDEX idx_albums_source ON albums(source);
     """),
+    (7, """
+        -- nome dato a mano a una cartella o a un momento (D-32): la rigenerazione degli album automatici non lo cambia
+        ALTER TABLE albums ADD COLUMN title_manual INTEGER NOT NULL DEFAULT 0;
+    """),
 ]
 
 

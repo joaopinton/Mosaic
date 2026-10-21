@@ -2,6 +2,7 @@
 
 Occasione, data, luogo, orario, persone, numero di foto: il riquadro più grande prende l'occasione. Il testo
 è impaginato una volta sola, in pixel del file finale, e l'anteprima riceve le stesse righe e le stesse misure.
+Le scritte si possono cambiare, nascondere, aggiungere e riordinare, con carattere e maiuscole a scelta (D-33).
 """
 
 from __future__ import annotations
@@ -22,10 +23,15 @@ TEXT_BLOCKS = (("#d52b1e", "#fbf8f1"), ("#1e4b9b", "#fbf8f1"), ("#f7d117", "#141
 TRIM = 0.04           # per data e orario si scarta il 4% di foto agli estremi: una foto del mattino dopo non allunga la serata
 MONTHS = ("gennaio", "febbraio", "marzo", "aprile", "maggio", "giugno", "luglio", "agosto", "settembre", "ottobre",
           "novembre", "dicembre")
-FONT_FILES = ("bahnschrift.ttf", "segoeuib.ttf", "arialbd.ttf")
+# carattere → (file di Windows, istanza del font variabile). L'anteprima usa la stessa famiglia con lo stesso peso.
+FONTS = {"bahnschrift": ("bahnschrift.ttf", "SemiBold"), "georgia": ("georgiab.ttf", None),
+         "impact": ("impact.ttf", None), "consolas": ("consolab.ttf", None)}
+FALLBACK_FILES = ("segoeuib.ttf", "arialbd.ttf")
+CASES = ("auto", "upper", "lower")   # etichetta maiuscola e valore come scritto; tutto maiuscolo; tutto minuscolo
 PAD = 0.09            # margine interno: frazione del lato corto del riquadro
 LABEL_SIZE = 0.085    # etichetta: frazione del lato corto (con un minimo leggibile)
 MAX_LINES = 4
+MAX_TEXTS, MAX_LABEL, MAX_VALUE = 8, 30, 80
 
 
 @dataclass(frozen=True)
@@ -40,6 +46,7 @@ class TextFit:
     value_px: int
     label_px: int
     pad_px: int
+    font: str = "bahnschrift"
 
 
 def _when(value: str | None) -> datetime | None:
@@ -89,6 +96,15 @@ def event_facts(ctx: Context, photo_ids: list[int], occasion: str = "", date: st
     return facts
 
 
+def styled(fact: Fact, case: str) -> Fact:
+    """Il testo come si stampa: le misure si prendono su questo, quindi anteprima e file vanno a capo uguali."""
+    if case == "upper":
+        return Fact(fact.label.upper(), fact.value.upper())
+    if case == "lower":
+        return Fact(fact.label.lower(), fact.value.lower())
+    return Fact(fact.label.upper(), fact.value)
+
+
 def _trimmed(times: list[datetime]) -> list[datetime]:
     """Senza le foto isolate agli estremi (dal 10 foto in su): una foto scattata la mattina dopo non conta."""
     if len(times) < 10:
@@ -97,27 +113,40 @@ def _trimmed(times: list[datetime]) -> list[datetime]:
     return times[cut:-cut]
 
 
-@lru_cache(maxsize=1)
-def _font_path() -> str | None:
+@lru_cache(maxsize=8)
+def _font_path(name: str) -> tuple[str, str | None] | None:
+    """File del carattere scelto (con l'istanza del font variabile), altrimenti Segoe UI o Arial in grassetto."""
     windir = os.environ.get("WINDIR")
     if not windir:
         return None
     fonts = Path(windir) / "Fonts"
-    for name in FONT_FILES:
-        if (fonts / name).is_file():
-            return str(fonts / name)
+    file, instance = FONTS.get(name, FONTS["bahnschrift"])
+    if (fonts / file).is_file():
+        return str(fonts / file), instance
+    for fallback in FALLBACK_FILES:
+        if (fonts / fallback).is_file():
+            return str(fonts / fallback), None
     return None
 
 
 @lru_cache(maxsize=256)
-def font(size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
-    path = _font_path()
-    return ImageFont.truetype(path, size) if path else ImageFont.load_default(size)
+def font(size: int, name: str = "bahnschrift") -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
+    found = _font_path(name)
+    if not found:
+        return ImageFont.load_default(size)
+    path, instance = found
+    f = ImageFont.truetype(path, size)
+    if instance:
+        try:
+            f.set_variation_by_name(instance)  # Bahnschrift semigrassetto, come nell'anteprima
+        except (OSError, ValueError):
+            pass  # FreeType senza font variabili: resta il peso normale
+    return f
 
 
-def _wrap(draw: ImageDraw.ImageDraw, text: str, size: int, width: int) -> list[str] | None:
+def _wrap(draw: ImageDraw.ImageDraw, text: str, size: int, width: int, name: str) -> list[str] | None:
     """Righe che stanno in `width` pixel alla misura `size`, oppure None se una parola sola è troppo larga."""
-    f = font(size)
+    f = font(size, name)
     lines: list[str] = []
     for word in text.split():
         if draw.textlength(word, font=f) > width:
@@ -129,20 +158,23 @@ def _wrap(draw: ImageDraw.ImageDraw, text: str, size: int, width: int) -> list[s
     return lines
 
 
-def fit_text(fact: Fact, width: int, height: int) -> TextFit:
+def fit_text(fact: Fact, width: int, height: int, name: str = "bahnschrift") -> TextFit:
     """La misura più grande del valore che sta nel riquadro (con l'etichetta sopra), con le righe già spezzate."""
     draw = ImageDraw.Draw(Image.new("L", (1, 1)))
     short = min(width, height)
     pad = max(2, round(PAD * short))
+    inner_w = width - 2 * pad
     label_px = max(8, round(LABEL_SIZE * short)) if fact.label else 0
-    inner_w, inner_h = width - 2 * pad, height - 2 * pad - (round(label_px * 1.6) if label_px else 0)
-    best = TextFit((fact.value,), 6, label_px, pad)
+    while label_px > 6 and draw.textlength(fact.label, font=font(label_px, name)) > inner_w:
+        label_px -= 1  # un'etichetta scritta a mano può essere lunga: si rimpicciolisce, mai fuori dal riquadro
+    inner_h = height - 2 * pad - (round(label_px * 1.6) if label_px else 0)
+    best = TextFit(tuple(_wrap(draw, fact.value, 6, inner_w, name) or [fact.value]), 6, label_px, pad, name)
     low, high = 6, max(6, inner_h)
     while low <= high:
         size = (low + high) // 2
-        lines = _wrap(draw, fact.value, size, inner_w)
+        lines = _wrap(draw, fact.value, size, inner_w, name)
         if lines is not None and len(lines) <= MAX_LINES and len(lines) * size * 1.08 <= inner_h:
-            best = TextFit(tuple(lines), size, label_px, pad)
+            best = TextFit(tuple(lines), size, label_px, pad, name)
             low = size + 1
         else:
             high = size - 1
@@ -150,12 +182,13 @@ def fit_text(fact: Fact, width: int, height: int) -> TextFit:
 
 
 def draw_fact(canvas: Image.Image, box: tuple[int, int, int, int], fg: str, fact: Fact, fit: TextFit) -> None:
-    """Etichetta in alto a sinistra, valore in basso a sinistra: impaginazione svizzera, testo in negativo."""
+    """Etichetta in alto a sinistra, valore in basso a sinistra: impaginazione svizzera, testo in negativo.
+    `fact` è già nella forma stampata (`styled`)."""
     x0, y0, x1, y1 = box
     draw = ImageDraw.Draw(canvas)
     if fact.label:
-        draw.text((x0 + fit.pad_px, y0 + fit.pad_px), fact.label.upper(), font=font(fit.label_px), fill=fg)
+        draw.text((x0 + fit.pad_px, y0 + fit.pad_px), fact.label, font=font(fit.label_px, fit.font), fill=fg)
     size = fit.value_px
     top = y1 - fit.pad_px - round(len(fit.lines) * size * 1.08)
     for i, line in enumerate(fit.lines):
-        draw.text((x0 + fit.pad_px, top + round(i * size * 1.08)), line, font=font(size), fill=fg)
+        draw.text((x0 + fit.pad_px, top + round(i * size * 1.08)), line, font=font(size, fit.font), fill=fg)

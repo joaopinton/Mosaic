@@ -1,13 +1,11 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import Dialog from '../components/Dialog.vue'
-import Dropdown from '../components/Dropdown.vue'
-import ExportDialog from '../components/ExportDialog.vue'
+import AlbumMenu from '../components/AlbumMenu.vue'
 import Icon from '../components/Icon.vue'
 import PageFrame from '../components/PageFrame.vue'
 import PhotoGrid from '../components/PhotoGrid.vue'
-import { allUids, api } from '../lib/api'
+import { api } from '../lib/api'
 import { formatCount } from '../lib/format'
 import { currentAlbum, currentSection, openCurate, sidebar } from '../lib/store'
 import { SECTION_OF } from '../lib/nav'
@@ -19,46 +17,32 @@ const route = useRoute()
 const router = useRouter()
 const album = ref<Album | null>(null)
 const missing = ref(false)
-const renaming = ref(false)
-const deleting = ref(false)
-const newTitle = ref('')
 const story = ref('')
 const savingStory = ref(false)
 const regenerating = ref(false)
-const exportUids = ref<string[]>([])
-const exporting = ref(false)
+const menu = ref<InstanceType<typeof AlbumMenu> | null>(null)
+// dove tornare dopo aver rimosso l'album: la sezione da cui viene
+const LIST_OF: Record<string, string> = { album: '/albums', folder: '/folders', moment: '/moments', month: '/calendar' }
 
-async function askExport(): Promise<void> {
-  if (!album.value) return
-  try {
-    exportUids.value = await allUids(`album:${album.value.uid}`)
-    exporting.value = true
-  } catch (error) {
-    toast(errorMessage(error), 'error')
-  }
+function setAlbum(updated: Album): void {
+  album.value = updated
+  currentAlbum.value = updated.type === 'album' ? { uid: updated.uid, title: updated.title } : null
+}
+
+function removed(): void {
+  void router.push(LIST_OF[album.value?.type ?? 'album'] ?? '/albums')
 }
 
 async function load(): Promise<void> {
   missing.value = false
   try {
-    album.value = await api.album(String(route.params.uid))
-    newTitle.value = album.value.title
-    currentAlbum.value = album.value.type === 'album' ? { uid: album.value.uid, title: album.value.title } : null
-    currentSection.value = SECTION_OF[album.value.type] ?? null
-    story.value = album.value.description
+    const loaded = await api.album(String(route.params.uid))
+    setAlbum(loaded)
+    currentSection.value = SECTION_OF[loaded.type] ?? null
+    story.value = loaded.description
   } catch {
     missing.value = true
     currentAlbum.value = null
-  }
-}
-
-async function rename(): Promise<void> {
-  if (!album.value || !newTitle.value.trim()) return
-  try {
-    album.value = await api.patchAlbum(album.value.uid, { title: newTitle.value.trim() })
-    renaming.value = false
-  } catch (error) {
-    toast(errorMessage(error), 'error')
   }
 }
 
@@ -92,19 +76,10 @@ async function regenerate(): Promise<void> {
 
 async function toggleFavorite(): Promise<void> {
   if (!album.value) return
-  album.value = await api.patchAlbum(album.value.uid, { favorite: !album.value.favorite })
-}
-
-async function remove(): Promise<void> {
-  if (!album.value) return
   try {
-    await api.deleteAlbum(album.value.uid)
-    toast('Album eliminato: le foto restano nella libreria')
-    void router.push('/albums')
+    album.value = await api.patchAlbum(album.value.uid, { favorite: !album.value.favorite })
   } catch (error) {
     toast(errorMessage(error), 'error')
-  } finally {
-    deleting.value = false
   }
 }
 
@@ -118,21 +93,15 @@ watch(() => route.params.uid, load)
     <div class="empty"><h3>Questo album non esiste più</h3><RouterLink to="/albums" class="btn">Torna agli album</RouterLink></div>
   </PageFrame>
   <PageFrame v-else-if="album" :title="album.title" width="full"
-             :subtitle="`${formatCount(album.photo_count)} foto${album.smart ? ' · album automatico' : ''}${album.source ? ` · selezione di ${album.source.title}` : ''}`">
+             :subtitle="`${formatCount(album.photo_count)} foto${album.smart ? ' · album automatico' : ''}${album.source ? ` · selezione di ${album.source.title}` : ''}${album.private ? ' · tra le nascoste' : ''}`">
     <template #actions>
       <button type="button" class="btn primary" data-test="curate" :disabled="album.photo_count === 0"
               :aria-expanded="sidebar.panel === 'curate'" @click="openCurate({ uid: album.uid, title: album.title })">
         <Icon name="wand" /> Crea selezione
       </button>
-      <button type="button" class="btn" data-test="album-export" :disabled="album.photo_count === 0" @click="askExport"><Icon name="download" /> Esporta</button>
+      <button type="button" class="btn" data-test="album-export" :disabled="album.photo_count === 0" @click="menu?.exportAll()"><Icon name="download" /> Esporta</button>
       <button type="button" class="btn icon" :class="{ active: album.favorite }" :aria-pressed="album.favorite" aria-label="Album preferito" @click="toggleFavorite"><Icon name="heart" /></button>
-      <Dropdown label="Azioni sull'album">
-        <button type="button" class="menu-item" role="menuitem" @click="renaming = true"><Icon name="edit" /> Rinomina</button>
-        <template v-if="album.type === 'album'">
-          <div class="menu-sep" />
-          <button type="button" class="menu-item danger" role="menuitem" @click="deleting = true"><Icon name="trash" /> Elimina l'album</button>
-        </template>
-      </Dropdown>
+      <AlbumMenu ref="menu" :album="album" @changed="setAlbum" @removed="removed" />
     </template>
     <section class="panel panel-pad story" aria-labelledby="story-title">
       <h2 id="story-title">Racconta la giornata</h2>
@@ -145,17 +114,7 @@ watch(() => route.params.uid, load)
       </div>
     </section>
     <SavedWork :album="album" />
-    <ExportDialog :open="exporting" :uids="exportUids" :title="album.title" @close="exporting = false" />
     <PhotoGrid :query="`album:${album.uid}`" empty-title="Album vuoto" empty-text="Seleziona alcune foto in Esplora e aggiungile a questo album." />
-
-    <Dialog :open="renaming" title="Rinomina l'album" size="sm" @close="renaming = false">
-      <form class="field" @submit.prevent="rename"><label for="al-title">Titolo</label><input id="al-title" v-model="newTitle" class="input" maxlength="200" /></form>
-      <template #footer><button type="button" class="btn" @click="renaming = false">Annulla</button><button type="button" class="btn primary" @click="rename">Salva</button></template>
-    </Dialog>
-    <Dialog :open="deleting" title="Eliminare l'album?" size="sm" @close="deleting = false">
-      <p>«{{ album.title }}» viene eliminato. Le foto restano nella libreria.</p>
-      <template #footer><button type="button" class="btn" @click="deleting = false">Annulla</button><button type="button" class="btn danger" @click="remove">Elimina</button></template>
-    </Dialog>
   </PageFrame>
   <PageFrame v-else title="Album" />
 </template>

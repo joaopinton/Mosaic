@@ -1,5 +1,7 @@
 import { api, uploadFile } from './api'
+import { formatBytes, formatCount } from './format'
 import { uploads, type Upload } from './store'
+import type { DropItem } from './types'
 
 // Trascina e rilascia (D-25). Nell'app desktop i percorsi veri arrivano da pywebview (window.mosaicDrop);
 // nel browser si leggono i file dal DataTransfer (cartelle comprese) e si caricano.
@@ -84,4 +86,31 @@ export function summarize(files: PickedFile[]): { photos: number; zips: number; 
     folders: folders.size,
     bytes: files.reduce((n, f) => n + f.file.size, 0),
   }
+}
+
+const folderCount = (n: number): string => (n === 1 ? 'una cartella' : `${formatCount(n)} cartelle`)
+
+function zipPlan(n: number, inPlace: boolean): string {
+  if (!n) return ''
+  const where = inPlace ? 'accanto a sé' : 'nella copia'
+  return n === 1
+    ? ` Lo zip che contiene si estrae ${where}, in una cartella con il suo nome${inPlace ? ' (lo zip resta)' : ''}.`
+    : ` I ${formatCount(n)} zip che contiene si estraggono ${where}, ognuno in una cartella con il suo nome${inPlace ? ' (gli zip restano)' : ''}.`
+}
+
+/** Cosa contiene un elemento rilasciato e cosa gli succederà (D-25, D-31), per il dialogo di conferma. */
+export function describeItem(item: DropItem, folders: 'link' | 'copy'): { summary: string; plan: string } {
+  if (item.kind === 'missing') return { summary: 'non trovato', plan: '' }
+  if (item.kind === 'unsupported') return { summary: 'non è una foto, un video o uno zip: lo salto', plan: '' }
+  const count = item.media ? `${formatCount(item.media)} ${item.media === 1 ? 'foto o video' : 'foto e video'}` : 'nessuna foto'
+  const summary = `${count} · ${formatBytes(item.size)}`
+  if (item.kind === 'media') return { summary, plan: item.in_library ? 'È già nella libreria: la ricontrollo.' : 'Si copia nella libreria, per data.' }
+  const shown = item.folders ? ` In «Cartelle» ${item.folders === 1 ? 'compare' : 'compaiono'} ${folderCount(item.folders)}.` : ''
+  if (item.kind === 'zip') return { summary, plan: `Si estrae nella libreria in «${item.dest_name}», con le sue sottocartelle.${shown}` }
+  const inPlace = item.in_library || (folders === 'link' && !item.contains_library)
+  const zips = zipPlan(item.zips, inPlace)
+  if (item.in_library) return { summary, plan: `È già nella libreria: la ricontrollo.${shown}${zips}` }
+  if (inPlace) return { summary, plan: `Si collega dov'è, senza copie: ogni sottocartella con foto diventa una cartella.${shown}${zips}` }
+  const why = item.contains_library ? 'Contiene una cartella della libreria, quindi si copia' : 'Si copia'
+  return { summary, plan: `${why} nella libreria in «${item.dest_name}», con le stesse sottocartelle.${shown}${zips}` }
 }

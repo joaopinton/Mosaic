@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import sqlite3
 from collections.abc import Iterable
+from pathlib import Path
 from typing import Any
 
 from mosaic.context import Context
 from mosaic.db import utcnow
 from mosaic.index.store import new_uid
 from mosaic.search import query as search_query
+from mosaic.search.parser import parse
 from mosaic.textutil import slugify
 
 AUTO_TYPES = ("folder", "month", "moment")
@@ -104,13 +106,38 @@ def remove_photos(conn: sqlite3.Connection, album_id: int, photo_ids: Iterable[i
 
 
 def update_album(conn: sqlite3.Connection, album_id: int, **fields: Any) -> None:
-    allowed = {"title", "description", "favorite", "private", "cover_photo_id"}
+    allowed = {"title", "description", "favorite", "private", "cover_photo_id", "title_manual"}
     changes = {k: v for k, v in fields.items() if k in allowed and v is not None}
     if "title" in changes and not str(changes["title"]).strip():
         raise AlbumError("il titolo dell'album non può essere vuoto")
     if changes:
         sets = ", ".join(f"{k}=?" for k in changes)
         conn.execute(f"UPDATE albums SET {sets}, updated_at=? WHERE id=?", (*changes.values(), utcnow(), album_id))
+
+
+def disk_folder(conn: sqlite3.Connection, album: sqlite3.Row) -> tuple[Path, str | None] | None:
+    """Cartella sul disco di un album cartella, letta dal suo filtro (D-32), e la radice se è una cartella della libreria.
+
+    Il percorso viene dal catalogo (radice e sottocartella indicizzate), mai da chi chiama.
+    """
+    if album["type"] != "folder" or not album["filter"]:
+        return None
+    q = parse(album["filter"])
+    root_f, folder_f = q.get("root"), q.get("folder")
+    folder = folder_f.values[0].strip("/") if folder_f and folder_f.values else ""
+    if root_f and root_f.values:
+        root = root_f.values[0]
+    elif folder:
+        row = conn.execute("SELECT root FROM folders WHERE path=? OR path LIKE ? ESCAPE '\\' ORDER BY id LIMIT 1",
+                           (folder, search_query.prefix_like(folder + "/"))).fetchone()
+        if row is None:
+            return None
+        root = row["root"]
+    else:
+        return None
+    if not folder:
+        return Path(root), root
+    return Path(root, *folder.split("/")), None
 
 
 def delete_album(conn: sqlite3.Connection, album_id: int) -> None:

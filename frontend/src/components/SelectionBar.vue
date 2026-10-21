@@ -18,6 +18,7 @@ const busy = ref(false)
 const removing = ref(false)
 const exporting = ref(false)
 const exportUids = ref<string[]>([])
+const exportCrop = ref(false)
 
 /** Titolo proposto per una nuova selezione: «Selezione del 20 ottobre». */
 function defaultTitle(now = new Date()): string {
@@ -29,8 +30,9 @@ function askNew(): void {
   newAlbum.value = true
 }
 
-function askExport(): void {
+function askExport(crop = false): void {
   exportUids.value = [...selected.value] // fotografia della selezione: resta valida anche se poi cambia
+  exportCrop.value = crop // «Ritaglia…» apre lo stesso dialogo con il ritaglio a formato acceso (D-34)
   exporting.value = true
 }
 
@@ -100,7 +102,8 @@ async function createAndAdd(): Promise<void> {
           <span v-if="a.source" class="from truncate">da {{ a.source.title }}</span>
         </button>
       </Dropdown>
-      <button type="button" class="btn sm" data-test="bar-export" @click="askExport"><Icon name="download" /> Esporta…</button>
+      <button type="button" class="btn sm" data-test="bar-export" @click="askExport()"><Icon name="download" /> Esporta…</button>
+      <button type="button" class="btn sm" data-test="bar-crop" @click="askExport(true)"><Icon name="crop" /> Ritaglia…</button>
       <button type="button" class="btn sm" :disabled="busy" @click="run('archive', 'Archiviate')"><Icon name="archive" /> Archivia</button>
       <button type="button" class="btn ghost sm" @click="run('restore', 'Ripristinate')">Ripristina</button>
       <button v-if="currentAlbum" type="button" class="btn sm" :disabled="busy" data-test="bar-out-of-album"
@@ -112,7 +115,7 @@ async function createAndAdd(): Promise<void> {
 
   <RemovePhotosDialog :open="removing" :uids="selected" @close="removing = false" @done="afterRemove" />
 
-  <ExportDialog :open="exporting" :uids="exportUids" :title="defaultTitle()" @close="exporting = false" />
+  <ExportDialog :open="exporting" :uids="exportUids" :title="defaultTitle()" :crop="exportCrop" @close="exporting = false" />
 
   <Dialog :open="newAlbum" title="Nuova selezione o album" size="sm" @close="newAlbum = false">
     <form class="field" @submit.prevent="createAndAdd">

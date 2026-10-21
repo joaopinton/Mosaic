@@ -8,12 +8,13 @@ vi.mock('../src/lib/api', async (original) => ({ ...(await original<typeof impor
 
 import DropDialog from '../src/components/DropDialog.vue'
 import DropZone from '../src/components/DropZone.vue'
-import { collectFiles, summarize, uploadAll } from '../src/lib/drop'
+import { collectFiles, describeItem, summarize, uploadAll } from '../src/lib/drop'
 import * as store from '../src/lib/store'
 import type { DropItem } from '../src/lib/types'
 
 const item = (extra: Partial<DropItem>): DropItem => ({
-  path: 'D:\\Foto\\Festa', name: 'Festa', kind: 'folder', size: 5_000_000, media: 12, in_library: false, contains_library: false, ...extra,
+  path: 'D:\\Foto\\Festa', name: 'Festa', kind: 'folder', size: 5_000_000, media: 12, in_library: false, contains_library: false,
+  folders: 3, zips: 0, dest_name: 'Festa', ...extra,
 })
 
 beforeEach(() => {
@@ -133,6 +134,44 @@ describe('zona di rilascio', () => {
     await flushPromises()
     expect(api.dropInspect).toHaveBeenCalledWith(['D:\\Foto\\Festa'])
     expect(document.body.textContent).toContain('Collega dove sono')
+    wrapper.unmount()
+  })
+})
+
+describe('cosa succederà (D-31)', () => {
+  it('una cartella collegata: le sottocartelle diventano cartelle, gli zip si estraggono accanto a sé', () => {
+    const { summary, plan } = describeItem(item({ zips: 2 }), 'link')
+    expect(summary).toContain('12 foto e video')
+    expect(plan).toContain('Si collega dov\'è')
+    expect(plan).toContain('compaiono 3 cartelle')
+    expect(plan).toContain('I 2 zip che contiene si estraggono accanto a sé')
+    expect(plan).toContain('gli zip restano')
+  })
+
+  it('una cartella copiata va in una cartella con il suo nome, gli zip dentro la copia', () => {
+    const { plan } = describeItem(item({ zips: 1 }), 'copy')
+    expect(plan).toContain('Si copia nella libreria in «Festa», con le stesse sottocartelle')
+    expect(plan).toContain('Lo zip che contiene si estrae nella copia')
+    expect(describeItem(item({ contains_library: true }), 'link').plan).toContain('Contiene una cartella della libreria, quindi si copia')
+  })
+
+  it('uno zip si estrae in una cartella con il suo nome; foto sciolte per data', () => {
+    const zip = describeItem(item({ kind: 'zip', name: 'Gita.zip', dest_name: 'Gita', folders: 1 }), 'link')
+    expect(zip.plan).toBe('Si estrae nella libreria in «Gita», con le sue sottocartelle. In «Cartelle» compare una cartella.')
+    expect(describeItem(item({ kind: 'media', media: 1 }), 'link').plan).toBe('Si copia nella libreria, per data.')
+    expect(describeItem(item({ kind: 'unsupported' }), 'link').plan).toBe('')
+  })
+
+  it('il dialogo mostra il piano e lo aggiorna quando si sceglie di copiare', async () => {
+    api.dropInspect.mockResolvedValue({ items: [item({ zips: 1 })], dest: 'D:\\Libreria' })
+    const wrapper = mount(DropDialog, { props: { paths: ['D:\\Foto\\Festa'], files: null }, attachTo: document.body })
+    await flushPromises()
+    const plan = (): string => document.querySelector('[data-test="drop-plan"]')?.textContent ?? ''
+    expect(plan()).toContain('accanto a sé')
+    expect(document.body.textContent).toContain("è l'unica cosa che Mosaic scrive lì")
+    document.querySelector<HTMLInputElement>('input[value="copy"]')!.click()
+    await flushPromises()
+    expect(plan()).toContain('nella copia')
     wrapper.unmount()
   })
 })

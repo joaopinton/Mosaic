@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 Uids = list[str]
 
@@ -51,6 +51,11 @@ class CurateRequest(BaseModel):
     seed: int = Field(default=0, ge=0, le=1_000_000)
 
 
+class PosterText(BaseModel):
+    label: str = Field(default="", max_length=30)
+    value: str = Field(default="", max_length=80)
+
+
 class PosterRequest(BaseModel):
     uids: Uids = Field(min_length=1, max_length=200)
     paper: Literal["a4", "a3", "a2", "30x40", "50x70", "70x100", "square"] = "a3"
@@ -64,6 +69,9 @@ class PosterRequest(BaseModel):
     occasion: str = Field(default="", max_length=80)
     date: str = Field(default="", max_length=80)
     place: str = Field(default="", max_length=80)
+    texts: list[PosterText] | None = Field(default=None, max_length=8)  # scritte dell'utente (D-33); None = automatiche
+    font: Literal["bahnschrift", "georgia", "impact", "consolas"] = "bahnschrift"
+    case: Literal["auto", "upper", "lower"] = "auto"
     album: str = Field(default="", max_length=64)  # album di riferimento: il poster si salva lì (D-27)
 
 
@@ -75,17 +83,36 @@ class EnhanceOptions(BaseModel):
     strength: Literal["light", "medium", "strong"] = "medium"
 
 
+class CropFormat(BaseModel):
+    """Formato del ritaglio (D-34): un rapporto w:h o, con `pixels`, la misura esatta delle copie."""
+    w: int = Field(ge=1, le=20000)
+    h: int = Field(ge=1, le=20000)
+    pixels: bool = False
+
+    @model_validator(mode="after")
+    def _not_too_thin(self) -> CropFormat:
+        if max(self.w / self.h, self.h / self.w) > 10:
+            raise ValueError("proporzioni troppo estreme: al massimo 10:1")
+        return self
+
+
 class ExportRequest(BaseModel):
     uids: Uids = Field(min_length=1, max_length=5000)
     dest: str = Field(min_length=1, max_length=500)
     raw: bool = False
     videos: bool = True
     enhance: EnhanceOptions | None = None
+    crop: CropFormat | None = None
 
 
 class ExportPreview(BaseModel):
     uids: Uids = Field(min_length=1, max_length=5000)
     enhance: EnhanceOptions = Field(default_factory=EnhanceOptions)
+
+
+class ExportCropPreview(BaseModel):
+    uids: Uids = Field(min_length=1, max_length=5000)
+    crop: CropFormat
 
 
 class FolderPick(BaseModel):

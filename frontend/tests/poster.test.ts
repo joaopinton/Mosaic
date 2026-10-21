@@ -17,7 +17,8 @@ const layout = (): PosterLayout => ({
       text: { fg: '#fbf8f1', label: 'DATA', lines: ['13–14', 'settembre 2025'], value: 0.2, label_size: 0.08, pad: 0.09 } },
     { x: 0.5, y: 0.5, w: 0.5, h: 0.5, uid: 'p2', hash: 'h2', color: null, crop: [0, 0, 1, 1], text: null },
   ],
-  facts: [{ label: 'Data', value: '13–14 settembre 2025' }],
+  font: 'bahnschrift',
+  facts: [{ label: '', value: 'Festa' }, { label: 'Data', value: '13–14 settembre 2025' }, { label: 'Foto', value: '2' }],
 })
 const job = (extra: Partial<Job>): Job => ({ id: 7, type: 'poster', state: 'running', progress: 0, message: '', error: '', created_at: '',
   finished_at: null, done: 0, total: 0, ...extra })
@@ -31,6 +32,20 @@ beforeEach(() => {
   store.jobs.value = []
 })
 afterEach(() => { document.body.innerHTML = '' })
+
+const rows = () => [...document.querySelectorAll<HTMLElement>('[data-test="poster-text"]')]
+const lastOptions = () => api.posterLayout.mock.lastCall![1]
+
+async function change(input: HTMLInputElement, value: string) {
+  input.value = value
+  input.dispatchEvent(new Event('change'))
+  await settle()
+}
+
+async function settle() {
+  await vi.advanceTimersByTimeAsync(300)
+  await flushPromises()
+}
 
 async function mountDialog() {
   const wrapper = mount(PosterDialog, { props: { open: true, uids: ['p1', 'p2'], title: 'Festa', album: 'a1' }, attachTo: document.body })
@@ -54,8 +69,8 @@ describe('poster a mosaico', () => {
     expect(fact.textContent).toContain('DATA')
     expect([...fact.querySelectorAll('.fact-value span')].map((s) => s.textContent)).toEqual(['13–14', 'settembre 2025'])
     expect(fact.style.getPropertyValue('--value')).toBe('calc(0.2 * 100cqh)')
-    expect(document.querySelector<HTMLInputElement>('#p-occasion')!.value).toBe('Festa')
-    expect(document.querySelector<HTMLInputElement>('#p-date')!.placeholder).toBe('13–14 settembre 2025')
+    expect(fact.style.fontFamily).toContain('Bahnschrift')
+    expect(rows().map((r) => r.querySelector<HTMLInputElement>('input.value')!.value)).toEqual(['Festa', '13–14 settembre 2025', '2'])
     wrapper.unmount()
   })
 
@@ -89,6 +104,61 @@ describe('poster a mosaico', () => {
     open.click()
     await flushPromises()
     expect(api.openPoster).toHaveBeenCalledWith('a1', 'poster-festa-1.jpg')
+    wrapper.unmount()
+  })
+
+  it('le scritte si cambiano, si nascondono e si riordinano, e l\'anteprima le riceve', async () => {
+    const wrapper = await mountDialog()
+    expect(lastOptions().texts).toBeNull()
+    await change(rows()[1].querySelector<HTMLInputElement>('input.value')!, 'estate 2025')
+    expect(lastOptions().texts).toEqual([{ label: '', value: 'Festa' }, { label: 'Data', value: 'estate 2025' }, { label: 'Foto', value: '2' }])
+    await change(rows()[1].querySelector<HTMLInputElement>('input:not(.value)')!, 'Quando')
+    expect(lastOptions().texts[1]).toEqual({ label: 'Quando', value: 'estate 2025' })
+    rows()[2].querySelector<HTMLButtonElement>('[aria-label="Nascondi la scritta 3"]')!.click()
+    await settle()
+    expect(lastOptions().texts).toEqual([{ label: '', value: 'Festa' }, { label: 'Quando', value: 'estate 2025' }])
+    expect(rows()[2].classList).toContain('off')
+    rows()[1].querySelector<HTMLButtonElement>('[aria-label="Sposta su la scritta 2"]')!.click()
+    await settle()
+    expect(lastOptions().texts.map((t: { value: string }) => t.value)).toEqual(['estate 2025', 'Festa'])
+    wrapper.unmount()
+  })
+
+  it('aggiunge una scritta libera, le fa posto e torna alle automatiche', async () => {
+    const wrapper = await mountDialog()
+    const colors = document.querySelector<HTMLInputElement>('#p-colors')!
+    colors.value = '3'
+    colors.dispatchEvent(new Event('input'))
+    await settle()
+    const add = [...document.querySelectorAll('button')].find((b) => b.textContent?.includes('Aggiungi scritta'))!
+    add.click()
+    await flushPromises()
+    const value = rows()[3].querySelector<HTMLInputElement>('input.value')!
+    expect(document.activeElement).toBe(value)
+    await change(value, 'Al garage')
+    expect(lastOptions().texts.at(-1)).toEqual({ label: '', value: 'Al garage' })
+    expect(lastOptions().colors).toBe(4)  // la quarta scritta entra: un riquadro in più
+    rows()[3].querySelector<HTMLButtonElement>('[aria-label="Togli la scritta 4"]')!.click()
+    await settle()
+    expect(lastOptions().texts).toHaveLength(3)
+    const reset = [...document.querySelectorAll('button')].find((b) => b.textContent?.includes('Automatiche'))!
+    reset.click()
+    await settle()
+    expect(lastOptions().texts).toBeNull()
+    expect(rows()).toHaveLength(3)
+    wrapper.unmount()
+  })
+
+  it('carattere e maiuscole vanno nella richiesta', async () => {
+    const wrapper = await mountDialog()
+    const font = document.querySelector<HTMLSelectElement>('#p-font')!
+    font.value = 'impact'
+    font.dispatchEvent(new Event('change'))
+    const letters = document.querySelector<HTMLSelectElement>('#p-case')!
+    letters.value = 'upper'
+    letters.dispatchEvent(new Event('change'))
+    await settle()
+    expect(lastOptions()).toEqual(expect.objectContaining({ font: 'impact', case: 'upper' }))
     wrapper.unmount()
   })
 })

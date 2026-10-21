@@ -18,7 +18,7 @@ import os
 import re
 import threading
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from pathlib import Path
 
@@ -26,7 +26,9 @@ import numpy as np
 from PIL import Image
 
 from mosaic.context import Context
-from mosaic.organize.poster_text import TEXT_BLOCKS, Fact, TextFit, draw_fact, event_facts, fit_text
+from mosaic.organize.poster_text import (
+    CASES, FONTS, MAX_LABEL, MAX_TEXTS, MAX_VALUE, TEXT_BLOCKS, Fact, TextFit, draw_fact, event_facts, fit_text, styled,
+)
 from mosaic.pipeline import thumb_source
 from mosaic.thumbs.render import open_image
 
@@ -64,8 +66,14 @@ class Options:
     occasion: str = ""     # dati scritti nei riquadri colorati (vuoti = calcolati o saltati)
     date: str = ""
     place: str = ""
+    texts: tuple[Fact, ...] | None = None  # scritte dell'utente nell'ordine dei riquadri (D-33); None = dati automatici
+    font: str = "bahnschrift"
+    case: str = "auto"
 
     def __post_init__(self) -> None:
+        if self.texts is not None:  # dal job arrivano come liste di dizionari (JSON)
+            object.__setattr__(self, "texts", tuple(
+                t if isinstance(t, Fact) else Fact(str(t["label"]), str(t["value"])) for t in self.texts))
         if self.paper not in PAPERS:
             raise PosterError(f"formato sconosciuto: {self.paper}")
         if self.style not in STYLES:
@@ -76,6 +84,11 @@ class Options:
             raise PosterError("opzioni del poster fuori dai limiti")
         if max(len(self.occasion), len(self.date), len(self.place)) > 80:
             raise PosterError("testi del poster troppo lunghi (al massimo 80 caratteri)")
+        if self.texts is not None and (len(self.texts) > MAX_TEXTS or any(
+                len(t.label) > MAX_LABEL or len(t.value) > MAX_VALUE for t in self.texts)):
+            raise PosterError(f"al massimo {MAX_TEXTS} scritte, etichette di {MAX_LABEL} e testi di {MAX_VALUE} caratteri")
+        if self.font not in FONTS or self.case not in CASES:
+            raise PosterError("carattere o maiuscole sconosciuti")
 
     @property
     def size_mm(self) -> tuple[float, float]:
@@ -302,10 +315,18 @@ def pieces_for(ctx: Context, uids: list[str], opts: Options) -> list[Piece]:
 
 
 def facts_for(ctx: Context, photo_ids: list[int], opts: Options) -> list[Fact]:
+    """Le scritte dei riquadri: quelle dell'utente se le ha cambiate (D-33), altrimenti i dati dell'evento."""
+    if opts.texts is not None:
+        return [Fact(t.label.strip(), t.value.strip()) for t in opts.texts if t.value.strip()]
+    return auto_facts(ctx, photo_ids, opts)
+
+
+def auto_facts(ctx: Context, photo_ids: list[int], opts: Options) -> list[Fact]:
     return event_facts(ctx, photo_ids, opts.occasion, opts.date, opts.place)
 
 
 _PLANS: dict[tuple, Layout] = {}
+_GRIDS: dict[tuple, Layout] = {}   # solo i riquadri: cambiare le scritte non rifà l'impaginazione (un secondo)
 _PLAN_LOCK = threading.Lock()
 
 
@@ -321,19 +342,25 @@ def plan(ctx: Context, uids: list[str], opts: Options) -> Layout:
 
 
 def _plan(ctx: Context, uids: list[str], opts: Options) -> Layout:
-    """Riquadri, ritagli e, nei riquadri colorati, i dati dell'evento già misurati in pixel."""
+    """Riquadri, ritagli e, nei riquadri colorati, le scritte già misurate in pixel."""
     width, height = opts.size_mm
     pieces = pieces_for(ctx, uids, opts)
-    lay = layout(pieces, width, height, opts.seed)
+    grid_key = (str(ctx.data_dir), tuple(uids), width, height, opts.seed, sum(1 for p in pieces if p.color == TEXT))
+    if grid_key not in _GRIDS:
+        if len(_GRIDS) >= 16:
+            _GRIDS.pop(next(iter(_GRIDS)))
+        _GRIDS[grid_key] = layout(pieces, width, height, opts.seed)
+    grid = _GRIDS[grid_key]
+    lay = Layout(grid.width, grid.height, [replace(c) for c in grid.cells], grid.cost)
     blocks = sorted((c for c in lay.cells if c.piece.color == TEXT), key=lambda c: -c.w * c.h)
     facts = facts_for(ctx, [p.photo_id for p in pieces if p.photo_id is not None], opts)
     px_w, px_h, _ = pixel_size(opts)
     line = line_px(opts, px_w, px_h)
-    for i, (cell, fact) in enumerate(zip(blocks, facts)):  # il riquadro più grande prende l'occasione
+    for i, (cell, fact) in enumerate(zip(blocks, facts)):  # il riquadro più grande prende la prima scritta
         cell.fill, cell.fg = TEXT_BLOCKS[i % len(TEXT_BLOCKS)]
-        cell.fact = fact
+        cell.fact = styled(fact, opts.case)
         x0, y0, x1, y1 = pixel_box(cell, lay, px_w / lay.width, line)
-        cell.fit = fit_text(fact, x1 - x0, y1 - y0)
+        cell.fit = fit_text(cell.fact, x1 - x0, y1 - y0, opts.font)
     return lay
 
 

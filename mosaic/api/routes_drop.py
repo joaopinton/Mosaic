@@ -24,7 +24,8 @@ CHUNK = 1 << 20
 
 def _item(i: dropin.DropItem) -> dict[str, Any]:
     return {"path": i.path, "name": i.name, "kind": i.kind, "size": i.size, "media": i.media,
-            "in_library": i.in_library, "contains_library": i.contains_library}
+            "in_library": i.in_library, "contains_library": i.contains_library, "folders": i.folders, "zips": i.zips,
+            "dest_name": i.dest_name}
 
 
 @router.post("/inspect")
@@ -36,7 +37,11 @@ def drop_inspect(body: DropPaths, m: Mosaic = Depends(get_mosaic)) -> dict[str, 
 
 @router.post("/add", status_code=202)
 def drop_add(body: DropAdd, m: Mosaic = Depends(get_mosaic)) -> dict[str, Any]:
-    """Collega le cartelle dove sono (o le copia), copia foto e video, estrae gli zip. Tutto in job con il loro progresso."""
+    """Collega le cartelle dove sono (o le copia), copia foto e video, estrae gli zip. Tutto in job con il loro progresso.
+
+    Gli zip dentro le cartelle collegate (o già nella libreria) si estraggono accanto a sé, in una cartella con il loro
+    nome, nel job `drop` accodato prima dell'indicizzazione: così le foto estratte entrano già al primo giro (D-31).
+    """
     items = dropin.inspect(m.ctx, body.paths)
     folders = [i for i in items if i.kind == "folder" and not i.in_library]
     link = _outermost([i.path for i in folders if body.folders == "link" and not i.contains_library])
@@ -44,6 +49,8 @@ def drop_add(body: DropAdd, m: Mosaic = Depends(get_mosaic)) -> dict[str, Any]:
     files = [i.path for i in items if i.kind == "media" and not i.in_library]
     zips = [i.path for i in items if i.kind == "zip"]
     reindex = any(i.in_library and i.kind in ("folder", "media") for i in items)
+    in_place = _outermost([*link, *(i.path for i in items if i.kind == "folder" and i.in_library)])
+    unzip = [str(z) for p in in_place for z in dropin.nested_zips(Path(p), (m.ctx.data_dir,))]
     if not (link or copy or files or zips or reindex):
         raise HTTPException(400, "niente da aggiungere: rilascia foto, video, cartelle o file .zip")
     if (copy or files or zips) and not (m.cfg.library_roots or link):
@@ -51,11 +58,12 @@ def drop_add(body: DropAdd, m: Mosaic = Depends(get_mosaic)) -> dict[str, Any]:
     out: dict[str, Any] = {"linked": link, "jobs": []}
     if link:
         m.reload_config(config_mod.update(m.cfg, {"library_roots": [*m.cfg.library_roots, *link]}))
+    if copy or files or zips or unzip:  # i job pesanti girano uno alla volta, in ordine: prima si estrae
+        out["jobs"].append(m.runner.submit("drop", {"files": files, "zips": zips, "copy_folders": copy, "unzip_here": unzip}))
+    if link:
         out["jobs"].append(m.runner.submit("index", {"roots": link}))
     if reindex:
         out["jobs"].append(m.runner.submit("index", {}, unique=True))
-    if copy or files or zips:
-        out["jobs"].append(m.runner.submit("drop", {"files": files, "zips": zips, "copy_folders": copy}))
     return out
 
 

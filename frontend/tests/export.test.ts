@@ -59,7 +59,7 @@ describe('ExportDialog', () => {
     await flushPromises()
     expect(api.exportPhotos).toHaveBeenCalledWith({
       uids: ['p1', 'p2'], dest: 'C:\\Users\\me\\Desktop\\Festa', raw: false, videos: true,
-      enhance: { light: true, contrast: true, vivid: true, harmonize: true, strength: 'medium' },
+      enhance: { light: true, contrast: true, vivid: true, harmonize: true, strength: 'medium' }, crop: null,
     })
     store.jobs.value = [{ id: 7, type: 'export', state: 'done', progress: 1, message: '2 foto esportate', error: '', created_at: '', finished_at: '', done: 2, total: 2 }]
     await nextTick()

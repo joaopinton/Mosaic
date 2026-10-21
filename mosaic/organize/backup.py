@@ -27,6 +27,7 @@ from mosaic.search import fts
 log = logging.getLogger(__name__)
 VERSION = 1
 LAST_KEY = "backup_at"
+ALBUMS_FILE = "albums.yml"
 
 
 def backup_path(ctx: Context, sha1: str) -> Path:
@@ -100,9 +101,57 @@ def backup_changed(ctx: Context) -> int:
     ids = [r["id"] for r in conn.execute(
         "SELECT id FROM photos WHERE deleted_at IS NULL AND updated_at>=? ORDER BY id", (since,))]
     written = sum(1 for pid in ids if write_backup(ctx, pid))
+    written += int(write_album_names(ctx))
     conn.execute("INSERT INTO settings(key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
                  (LAST_KEY, started))
     return written
+
+
+def album_names_path(ctx: Context) -> Path:
+    return ctx.backup_dir / ALBUMS_FILE
+
+
+def load_album_names(ctx: Context) -> dict[tuple[str, str], dict[str, Any]]:
+    """Nomi dati a mano e cartelle nascoste degli album automatici (D-32), per «tipo, slug»."""
+    path = album_names_path(ctx)
+    data = _load(path) if path.exists() else None
+    out: dict[tuple[str, str], dict[str, Any]] = {}
+    for item in (data or {}).get("albums", []):
+        if isinstance(item, dict) and item.get("type") and item.get("slug"):
+            out[(str(item["type"]), str(item["slug"]))] = item
+    return out
+
+
+def write_album_names(ctx: Context) -> bool:
+    """Salva in YAML i nomi dati a mano a cartelle e momenti, e quali sono nascosti. Ritorna True se il file è cambiato.
+
+    Gli album automatici si rigenerano dalle foto, quindi la chiave è «tipo, slug» con il filtro per controllo.
+    Le voci di album che oggi non ci sono (cartella staccata, database perso) restano: tornano quando l'album ricompare.
+    """
+    current = {(r["type"], r["slug"]): r for r in ctx.db.all(
+        "SELECT type, slug, title, filter, title_manual, private FROM albums WHERE type IN ('folder','month','moment') "
+        "AND deleted_at IS NULL")}
+    names = {key: item for key, item in load_album_names(ctx).items() if key not in current}
+    for key, row in current.items():
+        if row["title_manual"] or row["private"]:
+            item: dict[str, Any] = {"type": row["type"], "slug": row["slug"], "filter": row["filter"]}
+            if row["title_manual"]:
+                item["title"] = row["title"]
+            if row["private"]:
+                item["hidden"] = True
+            names[key] = item
+    path = album_names_path(ctx)
+    text = yaml.safe_dump({"version": VERSION, "albums": [names[k] for k in sorted(names)]}, allow_unicode=True, sort_keys=False)
+    if not names and not path.exists():
+        return False
+    with contextlib.suppress(OSError):
+        if path.read_text(encoding="utf-8") == text:
+            return False
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(text, encoding="utf-8")
+    os.replace(tmp, path)
+    return True
 
 
 def _load(path: Path) -> dict[str, Any] | None:

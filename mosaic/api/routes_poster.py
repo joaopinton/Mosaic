@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -23,7 +24,8 @@ def _options(body: PosterRequest) -> poster.Options:
     try:
         return poster.Options(paper=body.paper, landscape=body.landscape, style=body.style, line=body.line,
                               colors=body.colors, seed=body.seed, dpi=body.dpi, occasion=body.occasion,
-                              date=body.date, place=body.place)
+                              date=body.date, place=body.place, font=body.font, case=body.case,
+                              texts=None if body.texts is None else tuple(poster.Fact(t.label, t.value) for t in body.texts))
     except poster.PosterError as exc:
         raise HTTPException(400, str(exc)) from exc
 
@@ -50,10 +52,10 @@ def poster_layout(body: PosterRequest, m: Mosaic = Depends(get_mosaic)) -> dict[
     px_w, px_h, dpi = poster.pixel_size(opts)
     line = poster.line_px(opts, px_w, px_h)
     cells = [_cell(c, lay, rows, px_w / lay.width, line) for c in lay.cells]
-    facts = poster.facts_for(m.ctx, ids, opts)
+    facts = poster.auto_facts(m.ctx, ids, opts)  # sempre i dati automatici: da qui l'interfaccia parte e ci torna
     return {"width_mm": lay.width, "height_mm": lay.height, "pixels": [px_w, px_h], "dpi": dpi,
             "line": 0 if opts.style == "none" else poster.LINES_MM[opts.line], "ink": poster.INK[opts.style], "cells": cells,
-            "facts": [{"label": f.label, "value": f.value} for f in facts]}
+            "font": opts.font, "facts": [{"label": f.label, "value": f.value} for f in facts]}
 
 
 def _cell(c: poster.Cell, lay: poster.Layout, rows: dict, scale: float, line: int) -> dict[str, Any]:
@@ -66,7 +68,7 @@ def _cell(c: poster.Cell, lay: poster.Layout, rows: dict, scale: float, line: in
     if c.fact and c.fit:
         _, y0, _, y1 = poster.pixel_box(c, lay, scale, line)
         height = max(1, y1 - y0)
-        out["text"] = {"fg": c.fg, "label": c.fact.label.upper(), "lines": list(c.fit.lines),
+        out["text"] = {"fg": c.fg, "label": c.fact.label, "lines": list(c.fit.lines),
                        "value": c.fit.value_px / height, "label_size": c.fit.label_px / height, "pad": c.fit.pad_px / height}
     return out
 
@@ -80,9 +82,7 @@ def poster_create(body: PosterRequest, m: Mosaic = Depends(get_mosaic)) -> dict[
     opts = _options(body)
     folder = poster.album_dir(m.ctx, album)
     name = poster.poster_name(body.title or album["title"], datetime.now())
-    payload = {"uids": body.uids, "name": name, "dir": str(folder), "options": {
-        "paper": opts.paper, "landscape": opts.landscape, "style": opts.style, "line": opts.line, "colors": opts.colors,
-        "seed": opts.seed, "dpi": opts.dpi, "occasion": opts.occasion, "date": opts.date, "place": opts.place}}
+    payload = {"uids": body.uids, "name": name, "dir": str(folder), "options": asdict(opts)}
     return {"job": m.runner.submit("poster", payload), "name": name, "folder": str(folder)}
 
 

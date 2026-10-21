@@ -3,20 +3,24 @@ import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { api, ApiError } from '../lib/api'
 import { jobs, refreshJobs } from '../lib/store'
 import { errorMessage, toast } from '../lib/toast'
-import type { EnhanceOptions, ExportPreviewShot } from '../lib/types'
+import type { CropFormat, EnhanceOptions, ExportPreviewShot } from '../lib/types'
 import Dialog from './Dialog.vue'
+import ExportCrop from './ExportCrop.vue'
 import Icon from './Icon.vue'
 import ProgressBar from './ProgressBar.vue'
 import Segmented from './Segmented.vue'
 
-// Esporta in una cartella (D-30): copie degli originali o, con «Migliora luce e colori», JPEG corretti.
-const props = defineProps<{ open: boolean; uids: string[]; title: string }>()
+// Esporta in una cartella (D-30): copie degli originali o, con «Migliora luce e colori» e «Ritaglia a formato» (D-34),
+// JPEG corretti e ritagliati. Il ritaglio si accende all'apertura solo se lo chiede `crop`.
+const props = defineProps<{ open: boolean; uids: string[]; title: string; crop?: boolean }>()
 const emit = defineEmits<{ close: [] }>()
 
 const dest = ref('')
 const raw = ref(false)
 const videos = ref(true)
 const improve = ref(false)
+const cropOn = ref(false)
+const cropFormat = ref<CropFormat | null>(null)
 const look = reactive<EnhanceOptions>({ light: true, contrast: true, vivid: true, harmonize: true, strength: 'medium' })
 const canPick = ref(true)
 const shots = ref<ExportPreviewShot[]>([])
@@ -34,11 +38,17 @@ const phase = computed<'edit' | 'working' | 'done' | 'failed'>(() => {
 })
 const fraction = computed(() => (job.value && job.value.total ? job.value.done / job.value.total : null))
 const count = computed(() => props.uids.length)
+const workingLabel = computed(() => {
+  if (cropOn.value) return improve.value ? 'Ritaglio, miglioro e salvo le foto…' : 'Ritaglio e salvo le foto…'
+  return improve.value ? 'Miglioro e copio le foto…' : 'Copio le foto…'
+})
+const canStart = computed(() => !!dest.value.trim() && !starting.value && count.value > 0 && (!cropOn.value || !!cropFormat.value))
 
 watch(() => props.open, async (open) => {
   if (!open) return
   created.value = null
   shots.value = []
+  cropOn.value = props.crop === true
   try {
     dest.value = (await api.exportDefaultDir(props.title)).folder
   } catch {
@@ -83,11 +93,13 @@ async function pick(): Promise<void> {
 }
 
 async function start(): Promise<void> {
-  if (starting.value || !dest.value.trim()) return
+  if (!canStart.value) return
   starting.value = true
+  const crop = cropOn.value ? cropFormat.value : null
   try {
     created.value = await api.exportPhotos({
-      uids: props.uids, dest: dest.value.trim(), raw: raw.value, videos: videos.value, enhance: improve.value ? { ...look } : null,
+      uids: props.uids, dest: dest.value.trim(), raw: raw.value && !crop, videos: videos.value && !crop,
+      enhance: improve.value ? { ...look } : null, crop,
     })
     void refreshJobs()
   } catch (error) {
@@ -129,9 +141,18 @@ watch(phase, (now) => {
 
       <fieldset class="checks">
         <legend class="caps">Cosa copiare</legend>
-        <label><input v-model="videos" type="checkbox" /> Anche i video</label>
-        <label><input v-model="raw" type="checkbox" /> Anche RAW e XMP</label>
+        <label><input v-model="videos" type="checkbox" :disabled="cropOn" /> Anche i video</label>
+        <label><input v-model="raw" type="checkbox" :disabled="cropOn" /> Anche RAW e XMP</label>
       </fieldset>
+
+      <section class="improve" :class="{ on: cropOn }">
+        <label class="switch-row">
+          <input v-model="cropOn" type="checkbox" data-test="export-crop" />
+          <span><strong><Icon name="crop" :size="15" /> Ritaglia a formato</strong>
+            <span class="hint">Le copie escono tutte nello stesso formato, ritagliate sui soggetti; gli originali restano come sono.</span></span>
+        </label>
+        <ExportCrop v-if="cropOn" v-model="cropFormat" :uids="uids" />
+      </section>
 
       <section class="improve" :class="{ on: improve }">
         <label class="switch-row">
@@ -164,7 +185,7 @@ watch(phase, (now) => {
 
     <div v-else-if="phase === 'working'" class="status" role="status">
       <Icon name="spinner" class="spin" :size="22" />
-      <strong>{{ improve ? 'Miglioro e copio le foto…' : 'Copio le foto…' }}</strong>
+      <strong>{{ workingLabel }}</strong>
       <ProgressBar size="md" :value="fraction" label="Esportazione: avanzamento" />
       <span class="hint">{{ job?.message || 'in coda' }}</span>
       <span class="hint">Puoi chiudere: ti avviso quando ho finito.</span>
@@ -188,7 +209,7 @@ watch(phase, (now) => {
 
     <template v-if="phase === 'edit'" #footer>
       <button type="button" class="btn" @click="emit('close')">Annulla</button>
-      <button type="button" class="btn primary" data-test="export-start" :disabled="!dest.trim() || starting || !count" @click="start">
+      <button type="button" class="btn primary" data-test="export-start" :disabled="!canStart" @click="start">
         <Icon name="download" /> Esporta {{ count }} foto
       </button>
     </template>

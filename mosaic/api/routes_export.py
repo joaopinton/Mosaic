@@ -10,14 +10,18 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException
 
 from mosaic.api.deps import get_mosaic
-from mosaic.api.schemas import EnhanceOptions, ExportPreview, ExportRequest, FolderPick
-from mosaic.organize import enhance, export_photos
+from mosaic.api.schemas import CropFormat, EnhanceOptions, ExportCropPreview, ExportPreview, ExportRequest, FolderPick
+from mosaic.organize import enhance, export_photos, smart_crop
 from mosaic.service import Mosaic
 
 router = APIRouter(prefix="/api")
 
 
 def _enhance(body: EnhanceOptions | None) -> dict[str, Any] | None:
+    return body.model_dump() if body is not None else None
+
+
+def _crop(body: CropFormat | None) -> dict[str, Any] | None:
     return body.model_dump() if body is not None else None
 
 
@@ -30,7 +34,8 @@ def export_create(body: ExportRequest, m: Mosaic = Depends(get_mosaic)) -> dict[
     marks = ",".join("?" * len(body.uids))
     if m.ctx.db.one(f"SELECT 1 FROM photos WHERE uid IN ({marks}) LIMIT 1", tuple(body.uids)) is None:
         raise HTTPException(404, "nessuna foto trovata")
-    payload = {"uids": body.uids, "dest": str(dest), "raw": body.raw, "videos": body.videos, "enhance": _enhance(body.enhance)}
+    payload = {"uids": body.uids, "dest": str(dest), "raw": body.raw, "videos": body.videos, "enhance": _enhance(body.enhance),
+               "crop": _crop(body.crop)}
     return {"job": m.runner.submit("export", payload), "folder": str(dest)}
 
 
@@ -45,6 +50,12 @@ def export_preview(body: ExportPreview, m: Mosaic = Depends(get_mosaic)) -> dict
     """Prima e dopo di qualche foto con «Migliora luce e colori», deciso su tutto il gruppo."""
     opts = enhance.Options(**body.enhance.model_dump())
     return {"photos": export_photos.preview(m.ctx, body.uids, opts)}
+
+
+@router.post("/exports/crop-preview")
+def export_crop_preview(body: ExportCropPreview, m: Mosaic = Depends(get_mosaic)) -> dict[str, Any]:
+    """Qualche foto con il riquadro di «Ritaglia a formato» (D-34), calcolato come per i file."""
+    return {"photos": export_photos.crop_preview(m.ctx, body.uids, smart_crop.Format(**body.crop.model_dump()))}
 
 
 @router.post("/exports/{job_id}/reveal", status_code=204)

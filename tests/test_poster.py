@@ -257,3 +257,72 @@ def test_create_saves_into_the_album_and_lists_it(client, photos, ctx, library):
     assert c.get(f"/api/albums/{album}/posters/manca.jpg").status_code == 404
     from mosaic.index.indexer import index_roots
     assert index_roots(ctx).new_photos == 0  # il poster non diventa una foto della libreria
+
+
+# --- scritte personalizzate (D-33) --------------------------------------------------------------------
+
+def test_custom_texts_replace_the_facts_in_their_order(ctx, photos):
+    texts = (poster.Fact("Dove", "Al garage"), poster.Fact("", "Festa di Matteo"), poster.Fact("Vuota", "  "),
+             poster.Fact("Musica", "Dj Pippo"))
+    lay = poster.plan(ctx, photos, poster.Options(paper="a4", colors=8, texts=texts))
+    blocks = sorted((c for c in lay.cells if c.piece.color), key=lambda c: -c.w * c.h)
+    assert [(c.fact.label, c.fact.value) for c in blocks] == [("DOVE", "Al garage"), ("", "Festa di Matteo"), ("MUSICA", "Dj Pippo")]
+    upper = poster.plan(ctx, photos, poster.Options(paper="a4", colors=8, texts=texts, case="upper"))
+    assert max((c for c in upper.cells if c.piece.color), key=lambda c: c.w * c.h).fact.value == "AL GARAGE"
+    lower = poster.plan(ctx, photos, poster.Options(paper="a4", colors=8, texts=texts, case="lower"))
+    assert {c.fact.label for c in lower.cells if c.fact} == {"dove", "", "musica"}
+    none = poster.plan(ctx, photos, poster.Options(paper="a4", colors=8, texts=()))  # tutto nascosto: solo foto
+    assert not any(c.piece.color for c in none.cells)
+
+
+def test_changing_the_texts_keeps_the_layout(ctx, photos, monkeypatch):
+    calls = []
+    real = poster.layout
+    monkeypatch.setattr(poster, "layout", lambda *a, **k: calls.append(1) or real(*a, **k))
+    a = poster.plan(ctx, photos, poster.Options(paper="a4", seed=77, colors=2, texts=(poster.Fact("", "Uno"), poster.Fact("", "Due"))))
+    b = poster.plan(ctx, photos, poster.Options(paper="a4", seed=77, colors=2, font="georgia",
+                                                texts=(poster.Fact("A", "Tre"), poster.Fact("", "Quattro"))))
+    assert len(calls) == 1 and a is not b
+    assert [(c.x, c.y, c.w, c.h) for c in a.cells] == [(c.x, c.y, c.w, c.h) for c in b.cells]
+    assert {c.fact.value for c in a.cells if c.fact} == {"Uno", "Due"}  # la cache dei riquadri non si sporca
+    assert {c.fit.font for c in b.cells if c.fit} == {"georgia"}
+
+
+def test_fonts_and_long_labels_stay_inside_the_block():
+    from PIL import ImageDraw as Draw
+
+    from mosaic.organize.poster_text import PAD, Fact, fit_text, font
+    if poster.os.environ.get("WINDIR"):
+        assert font(40, "georgia").getname()[0] == "Georgia" and font(40, "impact").getname()[0] == "Impact"
+    fit = fit_text(Fact("UN'ETICHETTA LUNGA LUNGA DAVVERO", "Padova"), 220, 160, "impact")
+    draw = Draw.Draw(Image.new("L", (1, 1)))
+    assert fit.font == "impact" and draw.textlength("UN'ETICHETTA LUNGA LUNGA DAVVERO", font=font(fit.label_px, "impact")) \
+        <= 220 - 2 * round(PAD * 160)
+    with pytest.raises(poster.PosterError):
+        poster.Options(font="comic")
+    with pytest.raises(poster.PosterError):
+        poster.Options(texts=tuple(poster.Fact("", str(i)) for i in range(9)))
+    assert poster.Options(texts=[{"label": "A", "value": "b"}]).texts == (Fact("A", "b"),)  # come arriva dal job
+
+
+def test_layout_and_file_use_the_same_custom_texts(client, photos, ctx):
+    from mosaic.organize import albums
+
+    c, m = client
+    with ctx.db.tx() as conn:
+        album = albums.create_album(conn, "Festa")["uid"]
+    req = {"uids": photos, "paper": "a4", "dpi": 72, "colors": 3, "font": "consolas", "case": "upper",
+           "texts": [{"label": "Dove", "value": "Al garage"}, {"label": "", "value": "Festa"}]}
+    body = c.post("/api/posters/layout", json=req).json()
+    texts = [cell["text"] for cell in body["cells"] if cell["text"]]
+    assert body["font"] == "consolas" and len(texts) == 2
+    assert {t["label"] for t in texts} == {"DOVE", ""} and "AL GARAGE" in [" ".join(t["lines"]) for t in texts]
+    assert body["facts"][-1]["label"] == "Foto"  # i dati automatici restano, per tornare indietro
+    job = c.post("/api/posters", json={**req, "album": album}).json()
+    opts = poster.Options(**json.loads(m.runner.queue.get(job["job"])["payload"])["options"])
+    assert opts.texts == (poster.Fact("Dove", "Al garage"), poster.Fact("", "Festa")) and opts.case == "upper"
+    req_opts = poster.Options(paper="a4", dpi=72, colors=3, font="consolas", case="upper", texts=opts.texts)
+    assert poster.plan(ctx, photos, opts) is poster.plan(ctx, photos, req_opts)  # il file riusa il piano dell'anteprima
+    too_many = {**req, "texts": [{"label": "", "value": "x"}] * 9}
+    assert c.post("/api/posters/layout", json=too_many).status_code == 422
+    assert c.post("/api/posters/layout", json={**req, "texts": [{"label": "x" * 31, "value": "y"}]}).status_code == 422

@@ -2,7 +2,8 @@
 
 Si copia il file principale di ogni scatto (con RAW e XMP se richiesti), i nomi restano quelli originali e non si
 sovrascrive mai niente. Con «Migliora luce e colori» le foto diventano JPEG corretti da `enhance`; i video si copiano
-così come sono. Gli originali nella libreria non si toccano.
+così come sono. Con «Ritaglia a formato» (D-34) le foto escono JPEG ritagliate sui soggetti (`smart_crop`), e video e
+RAW restano fuori. Gli originali nella libreria non si toccano.
 """
 
 from __future__ import annotations
@@ -16,14 +17,15 @@ import shutil
 import sqlite3
 import threading
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
+import numpy as np
 from PIL import Image
 
 from mosaic.context import Context
 from mosaic.index.store import abs_path, photo_files, primary_file
-from mosaic.organize import enhance
+from mosaic.organize import enhance, smart_crop
 from mosaic.thumbs.convert import ensure_source
 from mosaic.thumbs.render import open_image
 
@@ -32,10 +34,13 @@ log = logging.getLogger(__name__)
 JPEG_QUALITY = 92
 SPACE_MARGIN = 1.05           # margine sullo spazio libero richiesto
 PREVIEW_MAX = 4
+CROP_PREVIEW_MAX = 6
 INVALID_NAME = re.compile(r'[<>:"/\\|?*\x00-\x1f]+')
 _STATS: dict[str, enhance.Stats] = {}  # misure per sha1 (+ volti): non cambiano finché non cambia il file
 _STATS_LOCK = threading.Lock()
 _STATS_MAX = 4000
+_SALIENCY: dict[str, np.ndarray] = {}  # mappe del soggetto per sha1 (piccole: 64 pixel di lato)
+_SALIENCY_MAX = 1000
 
 
 class ExportError(ValueError):
@@ -47,6 +52,7 @@ class Options:
     raw: bool = False                        # anche RAW, XMP e la parte video delle Live Photo
     videos: bool = True
     enhance: enhance.Options | None = None   # None: copie identiche
+    crop: smart_crop.Format | None = None    # None: nessun ritaglio (D-34)
 
 
 @dataclass
@@ -54,6 +60,7 @@ class Result:
     folder: Path
     copied: int = 0
     enhanced: int = 0
+    cropped: int = 0
     skipped: int = 0
     errors: list[str] = field(default_factory=list)
 
@@ -146,7 +153,9 @@ def _items(ctx: Context, uids: list[str], opts: Options) -> tuple[list[_Item], i
     for uid in dict.fromkeys(uids):
         row = rows.get(uid)
         main = primary_file(ctx.db, row["id"]) if row else None
-        if row is None or main is None or (main["media_type"] == "video" and not opts.videos):
+        unwanted = main is not None and ((main["media_type"] == "video" and not opts.videos)
+                                         or (opts.crop is not None and not _can_enhance(main)))  # si ritagliano solo foto
+        if row is None or main is None or unwanted:
             skipped += 1
             continue
         extra = tuple(f for f in photo_files(ctx.db, row["id"]) if f["id"] != main["id"]) if opts.raw else ()
@@ -184,6 +193,32 @@ def stats_for(ctx: Context, photo_id: int, sha1: str) -> enhance.Stats | None:
     return stats
 
 
+def saliency_for(ctx: Context, photo_id: int, sha1: str) -> np.ndarray | None:
+    """Mappa del soggetto principale sulla miniatura fit_720 (creata se manca), in cache: la stessa per anteprima e file."""
+    from mosaic.pipeline import thumb_source
+
+    with _STATS_LOCK:
+        if sha1 in _SALIENCY:
+            return _SALIENCY[sha1]
+    path = thumb_source(ctx, photo_id, "fit_720")
+    if path is None:
+        return None
+    with open_image(path) as img:
+        sal = smart_crop.saliency(img)
+    with _STATS_LOCK:
+        if len(_SALIENCY) >= _SALIENCY_MAX:
+            _SALIENCY.clear()
+        _SALIENCY[sha1] = sal
+    return sal
+
+
+def crop_for(ctx: Context, photo_id: int, sha1: str, width: int, height: int, fmt: smart_crop.Format) -> smart_crop.Box:
+    """Il ritaglio di una foto `width`×`height`: sui volti se ci sono, altrimenti sul soggetto principale."""
+    faces = _faces(ctx, photo_id)
+    sal = None if faces else saliency_for(ctx, photo_id, sha1)
+    return smart_crop.crop_box(width, height, fmt, faces, sal)
+
+
 def plan_items(ctx: Context, items: list[_Item], opts: enhance.Options,
                cancel: threading.Event | None = None) -> dict[int, enhance.Adjust]:
     """Correzioni per ogni scatto migliorabile, decise sul gruppo intero."""
@@ -213,8 +248,10 @@ def _check_space(folder: Path, need: int) -> None:
                           f"liberi {free / 1e9:.1f} GB")
 
 
-def _write_enhanced(ctx: Context, main: sqlite3.Row, adjust: enhance.Adjust, target: Path) -> None:
-    """La foto corretta come JPEG, con EXIF (orientamento già applicato) e profilo colore dell'originale."""
+def _write_photo(ctx: Context, item: _Item, adjust: enhance.Adjust | None, fmt: smart_crop.Format | None,
+                 target: Path) -> None:
+    """La foto ritagliata e/o corretta come JPEG, con EXIF (orientamento già applicato) e profilo colore dell'originale."""
+    main = item.main
     source = ensure_source(ctx, main)
     if source is None:
         raise OSError("foto non leggibile")
@@ -223,10 +260,17 @@ def _write_enhanced(ctx: Context, main: sqlite3.Row, adjust: enhance.Adjust, tar
         icc = original.info.get("icc_profile")
     exif[0x0112] = 1  # i pixel sono già girati
     with open_image(source) as img:
-        out = enhance.apply(img, adjust)
-    tmp = target.with_name(target.name + ".tmp")
-    out.save(tmp, "JPEG", quality=JPEG_QUALITY, optimize=True, subsampling=0, exif=exif.tobytes(),
-             **({"icc_profile": icc} if icc else {}))
+        out = img
+        if fmt is not None:
+            out = smart_crop.apply(img, crop_for(ctx, item.photo_id, main["sha1"], img.width, img.height, fmt), fmt)
+        if adjust is not None:
+            out = enhance.apply(out, adjust)
+        exif_ifd = exif.get_ifd(0x8769)
+        if exif_ifd:  # le dimensioni scritte nell'EXIF seguono il ritaglio
+            exif_ifd[0xA002], exif_ifd[0xA003] = out.size
+        tmp = target.with_name(target.name + ".tmp")
+        out.save(tmp, "JPEG", quality=JPEG_QUALITY, optimize=True, subsampling=0, exif=exif.tobytes(),
+                 **({"icc_profile": icc} if icc else {}))
     os.replace(tmp, target)
 
 
@@ -236,6 +280,8 @@ def export(ctx: Context, uids: list[str], dest: Path, opts: Options,
     """Copia (o migliora) le foto in `dest`; ritorna quante e gli errori. Si ferma tra una foto e l'altra se annullato."""
     from mosaic.organize.poster import mark_storage
 
+    if opts.crop is not None:  # si ritagliano solo le foto: niente video, RAW o XMP accanto alle copie
+        opts = replace(opts, raw=False, videos=False)
     items, skipped = _items(ctx, uids, opts)
     result = Result(folder=dest, skipped=skipped)
     if not items:
@@ -253,20 +299,29 @@ def export(ctx: Context, uids: list[str], dest: Path, opts: Options,
     for done, item in enumerate(items):
         if cancel is not None and cancel.is_set():
             break
-        _export_item(ctx, item, dest, taken, adjusts.get(item.photo_id), result)
+        _export_item(ctx, item, dest, taken, adjusts.get(item.photo_id), opts.crop, result)
         if progress:
             progress(done + 1, len(items), f"{done + 1} di {len(items)} foto")
     return result
 
 
 def _export_item(ctx: Context, item: _Item, dest: Path, taken: set[str], adjust: enhance.Adjust | None,
-                 result: Result) -> None:
+                 fmt: smart_crop.Format | None, result: Result) -> None:
     main = item.main
     name = main["name"]
     try:
-        if adjust is not None:
+        if fmt is not None:  # niente ripiego sulla copia identica: si vogliono solo foto nel formato scelto
             try:
-                _write_enhanced(ctx, main, adjust, _free_name(dest, f"{Path(name).stem}.jpg", taken))
+                _write_photo(ctx, item, adjust, fmt, _free_name(dest, f"{Path(name).stem}.jpg", taken))
+            except (OSError, ValueError) as exc:
+                log.warning("ritaglio non riuscito per %s: %s", name, exc)
+                result.errors.append(f"{name}: non ritagliata ({exc})")
+                return
+            result.cropped += 1
+            result.enhanced += adjust is not None
+        elif adjust is not None:
+            try:
+                _write_photo(ctx, item, adjust, None, _free_name(dest, f"{Path(name).stem}.jpg", taken))
                 result.enhanced += 1
             except (OSError, ValueError) as exc:  # si ripiega sulla copia identica
                 log.warning("miglioramento non riuscito per %s: %s", name, exc)
@@ -309,4 +364,27 @@ def preview(ctx: Context, uids: list[str], opts: enhance.Options, sample: int = 
         before.thumbnail((480, 480))
         uid = ctx.db.one("SELECT uid FROM photos WHERE id=?", (item.photo_id,))["uid"]
         out.append({"uid": uid, "before": _data_url(before), "after": _data_url(enhance.apply(before, adjusts[item.photo_id]))})
+    return out
+
+
+def crop_preview(ctx: Context, uids: list[str], fmt: smart_crop.Format,
+                 sample: int = CROP_PREVIEW_MAX) -> list[dict[str, object]]:
+    """Alcune foto con il riquadro del ritaglio in frazioni (x0, y0, x1, y1), calcolato come per il file."""
+    from mosaic.pipeline import thumb_source
+
+    items, _ = _items(ctx, uids, Options(videos=False, crop=fmt))
+    out: list[dict[str, object]] = []
+    for item in items:
+        if len(out) >= sample:
+            break
+        path = thumb_source(ctx, item.photo_id, "fit_720")
+        if path is None:
+            continue
+        with open_image(path) as img:
+            x0, y0, x1, y1 = crop_for(ctx, item.photo_id, item.main["sha1"], img.width, img.height, fmt)
+            w, h = img.size
+            small = img.copy()
+        small.thumbnail((480, 480))
+        uid = ctx.db.one("SELECT uid FROM photos WHERE id=?", (item.photo_id,))["uid"]
+        out.append({"uid": uid, "image": _data_url(small), "box": [x0 / w, y0 / h, x1 / w, y1 / h]})
     return out

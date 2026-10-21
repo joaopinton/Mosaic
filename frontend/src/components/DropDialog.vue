@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { api } from '../lib/api'
-import { summarize, uploadAll, type PickedFile } from '../lib/drop'
+import { describeItem, summarize, uploadAll, type PickedFile } from '../lib/drop'
 import { formatBytes, formatCount } from '../lib/format'
 import { openActivity, refreshJobs, refreshStatus } from '../lib/store'
 import { errorMessage, toast } from '../lib/toast'
@@ -28,14 +28,8 @@ const needsDest = computed(() => !dest.value && (props.files !== null || usable.
 
 const ICONS: Record<DropKind, string> = { folder: 'folder', media: 'image', zip: 'archive', unsupported: 'x', missing: 'alert' }
 
-function note(item: DropItem): string {
-  if (item.kind === 'missing') return 'non trovato'
-  if (item.kind === 'unsupported') return 'non è una foto, un video o uno zip: lo salto'
-  if (item.in_library) return 'è già nella libreria: la ricontrollo'
-  if (item.kind === 'folder' && item.contains_library) return 'contiene una cartella della libreria: la copio invece di collegarla'
-  const count = item.media ? `${formatCount(item.media)} ${item.media === 1 ? 'foto o video' : 'foto e video'}` : 'nessuna foto'
-  return `${count} · ${formatBytes(item.size)}`
-}
+const described = computed(() => items.value.map((item) => ({ item, ...describeItem(item, folders.value) })))
+const nestedZips = computed(() => items.value.some((i) => i.kind === 'folder' && i.zips > 0))
 
 let generation = 0
 watch(() => props.paths, async (paths) => {
@@ -103,18 +97,20 @@ async function confirm(): Promise<void> {
           <template v-if="upload.folders"> da {{ upload.folders }} {{ upload.folders === 1 ? 'cartella' : 'cartelle' }}</template>
           <template v-if="upload.zips"> · {{ upload.zips }} zip da estrarre</template>
         </p>
-        <p class="hint">Qui il browser non dice dove stanno i file sul computer: li carico e li copio nella libreria, ordinati per data.
-          Per collegare una cartella dov'è, usa l'app Mosaic.</p>
+        <p class="hint">Qui il browser non dice dove stanno i file sul computer: li carico e li copio nella libreria.
+          Ogni cartella e ogni zip finiscono in una cartella con il loro nome, con le stesse sottocartelle (anche gli zip che
+          contengono), e compaiono in «Cartelle»; foto e video sciolti vanno per data. Per collegare una cartella dov'è, usa l'app Mosaic.</p>
       </template>
 
       <template v-else>
         <ul class="items" aria-label="Elementi rilasciati">
-          <li v-for="item in items" :key="item.path" class="item" :data-kind="item.kind">
+          <li v-for="{ item, summary, plan } in described" :key="item.path" class="item" :data-kind="item.kind">
             <span class="kind"><Icon :name="ICONS[item.kind]" :size="16" /></span>
             <span class="what">
               <strong class="truncate" :title="item.path">{{ item.name }}</strong>
               <span class="path mono truncate" :title="item.path">{{ item.path }}</span>
-              <span class="note">{{ note(item) }}</span>
+              <span class="note">{{ summary }}</span>
+              <span v-if="plan" class="plan" data-test="drop-plan">{{ plan }}</span>
             </span>
           </li>
         </ul>
@@ -124,17 +120,20 @@ async function confirm(): Promise<void> {
           <label class="opt" :class="{ on: folders === 'link' }">
             <input v-model="folders" type="radio" value="link" name="drop-folders" />
             <span><strong>Collega dove sono</strong> <span class="tag">consigliato</span>
-              <span class="hint">Nessuna copia: Mosaic legge le foto dalla cartella originale e la tiene d'occhio.</span></span>
+              <span class="hint">Nessuna copia: Mosaic legge le foto dalla cartella originale e la tiene d'occhio. Ogni sottocartella con foto
+                diventa una cartella in «Cartelle».<template v-if="nestedZips"> Gli zip che contiene si estraggono accanto a sé, ognuno in una
+                cartella con il suo nome: è l'unica cosa che Mosaic scrive lì.</template></span></span>
           </label>
           <label class="opt" :class="{ on: folders === 'copy' }">
             <input v-model="folders" type="radio" value="copy" name="drop-folders" />
             <span><strong>Copia nella libreria</strong>
-              <span class="hint">Le foto vengono copiate per data nella libreria; la cartella originale resta com'è.</span></span>
+              <span class="hint">La cartella si copia nella libreria con il suo nome e le stesse sottocartelle (gli zip che contiene
+                si estraggono nella copia); la cartella originale resta com'è.</span></span>
           </label>
         </fieldset>
       </template>
 
-      <p v-if="dest && !loading" class="hint dest"><Icon name="drive" :size="14" /> Le copie vanno in <span class="mono">{{ dest }}</span>, divise per anno e mese. Gli originali non si toccano e i doppioni si saltano.</p>
+      <p v-if="dest && !loading" class="hint dest"><Icon name="drive" :size="14" /> Le copie vanno in <span class="mono">{{ dest }}</span>: cartelle e zip con il loro nome, foto e video sciolti per anno e mese. Gli originali non si toccano e i doppioni si saltano.</p>
       <p v-if="needsDest && !loading" class="error-text" role="alert">Prima collega una cartella alla libreria (dalla pagina Libreria, o rilasciando una cartella): le copie vanno lì.</p>
     </div>
     <template #footer>
@@ -157,6 +156,7 @@ async function confirm(): Promise<void> {
 .what { display: flex; flex-direction: column; gap: 2px; min-width: 0; font-size: var(--text-sm); }
 .path { color: var(--fg-subtle); font-size: var(--text-xs); }
 .note { color: var(--fg-muted); font-size: var(--text-xs); }
+.plan { color: var(--fg-default); font-size: var(--text-xs); }
 .choice { display: flex; flex-direction: column; gap: var(--space-2); margin: 0; padding: 0; border: 0; }
 .choice legend { padding-bottom: var(--space-1); }
 .opt { display: flex; align-items: flex-start; gap: var(--space-3); padding: var(--space-3); border: 1px solid var(--border-default); border-radius: var(--radius-panel); cursor: pointer;

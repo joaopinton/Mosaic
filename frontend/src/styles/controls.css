@@ -116,7 +116,8 @@ input[type="range"] { accent-color: var(--accent); }
   text-decoration: none;
   cursor: pointer;
 }
-.menu-item:hover, .menu-item:focus-visible { background: var(--bg-hover); }
+.menu-item:hover:not(:disabled), .menu-item:focus-visible { background: var(--bg-hover); }
+.menu-item:disabled { opacity: 0.55; cursor: not-allowed; }
 .menu-item.danger { color: var(--deviates-fg); }
 .menu-sep { height: 1px; margin: var(--space-1) 0; background: var(--border-subtle); }
 

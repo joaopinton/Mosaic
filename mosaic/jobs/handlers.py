@@ -230,21 +230,24 @@ def h_poster(ctx: Context, job: Job, ctl: JobControl) -> None:
 
 
 def h_export(ctx: Context, job: Job, ctl: JobControl) -> None:
-    """Foto copiate (o migliorate) in una cartella a scelta (D-30), una alla volta con il progresso."""
-    from mosaic.organize import enhance, export_photos
+    """Foto copiate (migliorate, ritagliate) in una cartella a scelta (D-30, D-34), una alla volta con il progresso."""
+    from mosaic.organize import enhance, export_photos, smart_crop
 
     payload = job.payload
-    look = payload.get("enhance")
+    look, crop = payload.get("enhance"), payload.get("crop")
     opts = export_photos.Options(raw=bool(payload.get("raw")), videos=bool(payload.get("videos", True)),
-                                 enhance=enhance.Options(**look) if look else None)
+                                 enhance=enhance.Options(**look) if look else None,
+                                 crop=smart_crop.Format(**crop) if crop else None)
     result = export_photos.export(ctx, list(payload["uids"]), Path(payload["dest"]), opts,
                                   progress=lambda done, total, label: ctl.progress(done / max(total, 1), label, done, total),
                                   cancel=ctl.cancel)
     for error in result.errors:
         ctx.db.log_error("export", "", error)
+    cut = f", {result.cropped} ritagliate" if result.cropped else ""
     better = f", {result.enhanced} migliorate" if result.enhanced else ""
+    left = f", {result.skipped} saltate" if result.skipped and crop else ""  # con il ritaglio: video e file illeggibili
     problems = f", {len(result.errors)} con problemi" if result.errors else ""
-    ctl.progress(1.0, f"{result.copied} foto esportate in {result.folder}{better}{problems}")
+    ctl.progress(1.0, f"{result.copied} foto esportate in {result.folder}{cut}{better}{left}{problems}")
 
 
 def h_cleanup(ctx: Context, job: Job, ctl: JobControl) -> None:

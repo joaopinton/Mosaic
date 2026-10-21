@@ -1,5 +1,5 @@
 import type {
-  Album, AppConfig, CalendarYear, CloudStatus, CurateParams, CurateResult, DropPreview, DuplicateExact, EnhanceOptions, ExportPreviewShot, ExportRequest, PosterFile, PosterLayout, PosterOptions, DuplicateNear, FaceGroup, Job, LabelInfo, PhotoDetail, PhotoList,
+  Album, AppConfig, CalendarYear, CloudStatus, CropFormat, CropPreviewShot, CurateParams, CurateResult, DropPreview, DuplicateExact, EnhanceOptions, ExportPreviewShot, ExportRequest, PosterFile, PosterLayout, PosterOptions, DuplicateNear, FaceGroup, Job, LabelInfo, PhotoDetail, PhotoList,
   ExcludedFile, LibraryRoots, RemoveResult, RenameBatch, RenamePreview, SimilarHit, Status, Subject, SuggestionGroup,
 } from './types'
 
@@ -58,13 +58,15 @@ export const api = {
   similar: (uid: string, k = 8) => get<{ ready: boolean; hits: SimilarHit[] }>(`/api/photos/${uid}/similar?k=${k}`),
   suggest: (q: string) => get<{ keys: string[]; values: string[] }>(`/api/search/suggest${queryString({ q })}`),
 
-  albums: (type?: string) => get<Album[]>(`/api/albums${queryString({ type })}`),
+  albums: (type?: string, hidden = false) => get<Album[]>(`/api/albums${queryString({ type, hidden })}`),
   album: (uid: string) => get<Album>(`/api/albums/${uid}`),
   createAlbum: (title: string, uids: string[] = [], source?: string) => post<Album>('/api/albums', { title, uids, source }),
   albumSelections: (uid: string) => get<Album[]>(`/api/albums/${uid}/selections`),
   albumPosters: (uid: string) => get<{ folder: string; posters: PosterFile[] }>(`/api/albums/${uid}/posters`),
   patchAlbum: (uid: string, body: Record<string, unknown>) => patch<Album>(`/api/albums/${uid}`, body),
   deleteAlbum: (uid: string) => request<void>('DELETE', `/api/albums/${uid}`),
+  restoreAlbumTitle: (uid: string) => post<Album>(`/api/albums/${uid}/restore-title`),
+  revealAlbum: (uid: string) => request<void>('POST', `/api/albums/${uid}/reveal`, {}),
   addToAlbum: (uid: string, uids: string[]) => post<{ changed: number }>(`/api/albums/${uid}/photos`, { uids }),
   curate: (uid: string, params: CurateParams) => post<CurateResult>(`/api/albums/${uid}/curate`, params),
   calendar: () => get<CalendarYear[]>('/api/calendar'),
@@ -110,6 +112,7 @@ export const api = {
   exportPhotos: (body: ExportRequest) => post<{ job: number; folder: string }>('/api/exports', body),
   exportDefaultDir: (title: string) => get<{ folder: string }>(`/api/exports/default-dir${queryString({ title })}`),
   exportPreview: (uids: string[], enhance: EnhanceOptions) => post<{ photos: ExportPreviewShot[] }>('/api/exports/preview', { uids, enhance }),
+  exportCropPreview: (uids: string[], crop: CropFormat) => post<{ photos: CropPreviewShot[] }>('/api/exports/crop-preview', { uids, crop }),
   revealExport: (job: number) => request<void>('POST', `/api/exports/${job}/reveal`, {}),
   pickFolder: (start: string) => post<{ folder: string | null }>('/api/dialog/folder', { start }),
   revealPoster: (album: string, name: string) => request<void>('POST', `/api/albums/${album}/posters/${encodeURIComponent(name)}/reveal`, {}),

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any
 
@@ -12,7 +13,7 @@ from mosaic.api.deps import get_mosaic, summary
 from mosaic.api.schemas import AlbumCreate, AlbumPatch, CurateRequest, Name, SubjectMerge, SubjectPatch, UidList
 from mosaic.llm.backends import NO_CAPTIONER, captioning_available
 from mosaic.meta import sources
-from mosaic.organize import albums, curate, people
+from mosaic.organize import albums, curate, moments, people
 from mosaic.search import query
 from mosaic.search.parser import QueryError, parse
 from mosaic.service import Mosaic
@@ -24,7 +25,9 @@ router = APIRouter(prefix="/api")
 
 def _album(m: Mosaic, a: Any) -> dict[str, Any]:
     source = albums.album_by_key(m.ctx.db.conn(), a["source"]) if a["source"] else None
-    return {"uid": a["uid"], "type": a["type"], "slug": a["slug"], "title": a["title"], "description": a["description"],
+    disk = albums.disk_folder(m.ctx.db.conn(), a)
+    return {"path": str(disk[0]) if disk else None, "root": disk[1] if disk else None, "renamed": bool(a["title_manual"]),
+            "uid": a["uid"], "type": a["type"], "slug": a["slug"], "title": a["title"], "description": a["description"],
             "smart": bool(a["filter"]), "filter": a["filter"], "favorite": bool(a["favorite"]), "private": bool(a["private"]),
             "photo_count": a["photo_count"], "cover": albums.cover_hash(m.ctx, a),
             "source": {"uid": source["uid"], "title": source["title"], "type": source["type"]} if source else None}
@@ -38,10 +41,12 @@ def _album_or_404(m: Mosaic, ref: str) -> Any:
 
 
 @router.get("/albums")
-def list_albums(type: str | None = None, m: Mosaic = Depends(get_mosaic)) -> list[dict[str, Any]]:
+def list_albums(type: str | None = None, hidden: bool = False, m: Mosaic = Depends(get_mosaic)) -> list[dict[str, Any]]:
+    """Gli album di un tipo; con `hidden` anche quelli nascosti dall'utente (D-32), con `private` vero."""
     if type is not None and type not in albums.TYPES:
         raise HTTPException(400, f"tipo di album non valido: {type}")
-    return [_album(m, a) for a in albums.list_albums(m.ctx, type) if a["photo_count"] > 0 or a["type"] == "album"]
+    return [_album(m, a) for a in albums.list_albums(m.ctx, type, include_hidden=hidden)
+            if a["photo_count"] > 0 or a["type"] == "album"]
 
 
 @router.post("/albums", status_code=201)
@@ -86,9 +91,12 @@ def patch_album(ref: str, body: AlbumPatch, m: Mosaic = Depends(get_mosaic)) -> 
         cover_id = row["id"]
     with m.ctx.db.tx() as conn:
         try:
+            # una cartella o un momento rinominati tengono il nome anche quando si rigenerano (D-32)
+            renamed = body.title is not None and album["type"] != "album" and body.title.strip() != album["title"]
             albums.update_album(conn, album["id"], title=body.title, description=body.description,
                                 favorite=None if body.favorite is None else int(body.favorite),
-                                private=None if body.private is None else int(body.private), cover_photo_id=cover_id)
+                                private=None if body.private is None else int(body.private), cover_photo_id=cover_id,
+                                title_manual=1 if renamed else None)
         except albums.AlbumError as exc:
             raise HTTPException(400, str(exc)) from exc
     return _album(m, _album_or_404(m, ref))
@@ -131,6 +139,31 @@ def delete_album(ref: str, m: Mosaic = Depends(get_mosaic)) -> None:
         raise HTTPException(400, "gli album automatici si rigenerano da soli: non si eliminano")
     with m.ctx.db.tx() as conn:
         albums.delete_album(conn, album["id"])
+
+
+@router.post("/albums/{ref}/restore-title")
+def restore_album_title(ref: str, m: Mosaic = Depends(get_mosaic)) -> dict[str, Any]:
+    """«Ripristina il nome originale» di una cartella o di un momento rinominati (D-32)."""
+    album = _album_or_404(m, ref)
+    if album["type"] == "album":
+        raise HTTPException(400, "solo cartelle e momenti hanno un nome dato da Mosaic")
+    title = moments.automatic_title(m.ctx, album["type"], album["slug"]) or album["title"]
+    with m.ctx.db.tx() as conn:
+        albums.update_album(conn, album["id"], title=title, title_manual=0)
+    return _album(m, _album_or_404(m, ref))
+
+
+@router.post("/albums/{ref}/reveal", status_code=204)
+def reveal_album(ref: str, m: Mosaic = Depends(get_mosaic)) -> None:
+    """Apre in Esplora file la cartella sul disco di un album cartella (D-32): il percorso lo dà il catalogo."""
+    disk = albums.disk_folder(m.ctx.db.conn(), _album_or_404(m, ref))
+    if disk is None:
+        raise HTTPException(400, "solo le cartelle del disco si aprono in Esplora file")
+    if not disk[0].is_dir():
+        raise HTTPException(404, f"la cartella non c'è più: {disk[0]}")
+    if os.name != "nt":
+        raise HTTPException(501, "disponibile solo su Windows")
+    os.startfile(disk[0])  # type: ignore[attr-defined]  # noqa: S606
 
 
 def _ids(m: Mosaic, uids: list[str]) -> list[int]:
