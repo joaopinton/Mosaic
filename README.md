@@ -1,5 +1,13 @@
 # Mosaic 2
 
+![Windows 10/11](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D6)
+![Python](https://img.shields.io/badge/Python-3.12--3.14-3776AB)
+![Locale](https://img.shields.io/badge/100%25-locale-0f766e)
+![Licenza](https://img.shields.io/badge/licenza-solo%20uso%20personale-b91c1c)
+
+![Esplora: la griglia delle foto in Mosaic](docs/images/esplora.png)
+*Esplora, la pagina iniziale di Mosaic (screenshot reale con le foto di esempio in `docs/mock_photos/`).*
+
 Gestore di foto e video **completamente locale**: niente Docker e niente cloud. È una ricostruzione del vecchio Mosaic che adotta le strategie di [PhotoPrism](https://github.com/photoprism/photoprism):
 - indicizzazione incrementale con stack RAW+JPEG+XMP+video;
 - priorità delle fonti dei metadati;
@@ -28,11 +36,124 @@ In più ci sono un motore di embedding moderno e un LLM locale incluso.
 - **Organizzazione**: album, moments, calendario, cartelle, preferiti, privato, archivio, review, duplicati e quasi-duplicati.
 - **Migrazione** del catalogo curato del vecchio Mosaic, abbinato per SHA-256.
 
+## Come funziona
+
+1. **Scegli la cartella** delle foto al primo avvio (o trascinala nella finestra). Gli originali restano dove sono.
+2. **Mosaic indicizza**: legge i metadati (exiftool), raggruppa gli stack RAW+JPEG+XMP, genera le miniature e calcola gli embedding di contenuto.
+3. **L'analisi** aggiunge etichette, colori, volti, moments e, se vuoi, didascalie, titoli e parole chiave in italiano.
+4. **Cerchi, organizzi, rinomini, stampi**: tutto in locale, con il database in `data/`.
+
+```mermaid
+flowchart LR
+    A[Cartella foto] --> B[Indicizzazione]
+    B --> C[Miniature]
+    B --> D[Embedding SigLIP 2]
+    D --> E[Etichette e colori]
+    D --> F[Volti e persone]
+    E --> G[Didascalie LLM]
+    F --> G
+    G --> H[Ricerca, album, selezioni, poster]
+```
+
+## Anteprima
+
+Gli screenshot di questa sezione sono **reali**: sono stati fatti con Mosaic aperto nel browser (`http://127.0.0.1:8000`) dopo aver indicizzato 9 foto di esempio create con un generatore di immagini AI (non sono foto di persone vere), che trovi in [`docs/mock_photos/`](docs/mock_photos). Per riprodurli:
+
+```bash
+.venv/Scripts/python -m mosaic index docs/mock_photos   # meglio su una copia: Mosaic rinomina i file
+.venv/Scripts/python -m mosaic serve
+```
+
+### Ricerca in italiano per contenuto
+
+![Ricerca "moto rossa"](docs/images/ricerca.png)
+
+Scrivi cosa cerchi con parole tue (qui "moto rossa"): Mosaic confronta il testo con il contenuto delle foto e restituisce le tre moto, non per nome del file. Si combina con i filtri (`+ Filtro`) come `label:`, `year:` o `color:`.
+
+### Il visore di una foto
+
+![Visore foto con etichette, persone e dati](docs/images/visore.png)
+
+Cliccando una foto si apre il visore: a sinistra l'immagine, con il riquadro rosso sul volto trovato; a destra tutto quello che Mosaic sa della foto. Titolo, didascalia, etichette e parole chiave si modificano a mano, i volti si nominano ("Chi è?"), si aggiunge la foto a un album e si leggono data, dimensioni, colori dominanti e qualità. In alto ci sono foto precedente/successiva, preferito, privato e il menu delle altre azioni.
+
+### Etichette automatiche
+
+![Etichette raggruppate per categoria](docs/images/etichette.png)
+
+Senza che tu scriva niente, le foto ricevono etichette (Montagna, Spiaggia, Ducati, Cibo…) raggruppate per categoria: Paesaggi, Moto, Cibo. Il vocabolario si modifica in `models/labels_it.yaml`.
+
+### Impostazioni
+
+![Impostazioni di Mosaic](docs/images/impostazioni.png)
+
+Tema chiaro, scuro o di sistema, scelta di cosa analizzare (contenuto, volti, contenuti sensibili), soglia di sicurezza delle etichette e descrizioni con l'AI.
+
+## Come è fatta l'app
+
+### L'interfaccia
+
+La barra laterale ha sempre le stesse voci:
+
+| Gruppo | Voci | Cosa mostrano |
+|---|---|---|
+| Azioni | **Aggiungi foto**, **Cerca**, **Filtri** | importare foto o cartelle, ricerca per contenuto, filtri combinabili |
+| Libreria | **Esplora**, **Album**, **Persone**, **Etichette**, **Calendario**, **Cartelle**, **Momenti** | i modi per navigare le foto: tutte, per album, per persona, per etichetta, per mese, per cartella o per evento |
+| Tipi | **Video**, **Live Photo** | solo video o solo Live Photo |
+| Stato | **Preferiti**, **Da rivedere**, **Duplicati**, **Privato**, **Archivio** | le foto messe da parte o da controllare |
+| In fondo | **Libreria**, **Impostazioni** | cartelle indicizzate, elaborazione e manutenzione; opzioni dell'app |
+
+La pagina **Libreria** elenca le cartelle collegate (`Cerca nuove foto`, `Rielabora tutto`) e il registro delle attività: indicizzazione, analisi AI, riconoscimento volti, album automatici, rinomina e backup.
+
+### Il percorso di una foto
+
+```text
+cartella ──> indicizzazione ──> miniature ──> analisi AI ──> volti ──> momenti ──> rinomina ──> backup
+               (exiftool,         (cache in     (SigLIP 2:    (YuNet +   (album       (journal    (YAML dei
+                stack, SHA-256)    data/)        etichette,    ArcFace)   automatici) e rollback) dati manuali)
+                                                 colori)
+```
+
+Ogni fase è un lavoro in coda: lo stesso percorso parte da `mosaic index` o dal pulsante **Aggiungi foto**, e il suo avanzamento si vede nella barra di progresso e nel registro della pagina Libreria.
+
+### Il codice
+
+```text
+frontend/ (Vue 3)  ──HTTP──>  mosaic/api (FastAPI)  ──>  mosaic/pipeline + jobs
+  pages/ componenti            routes_*.py                  index  meta  thumbs  ai  llm
+                                                            search organize video
+                                                                 │
+                                                          data/ (SQLite + cache)
+```
+
+- `frontend/src/pages/`: una pagina per ogni voce della barra (`LibraryPage.vue`, `SearchPage.vue`, `PeoplePage.vue`, `SettingsPage.vue`…).
+- `mosaic/api/`: le rotte, divise per argomento (`routes_photos`, `routes_library`, `routes_collections`, `routes_poster`…).
+- `mosaic/pipeline.py` e `mosaic/jobs/`: la catena di fasi e la coda dei lavori.
+- `mosaic/index`, `meta`, `thumbs`, `ai`, `llm`, `search`, `organize`, `video`: un modulo per ogni compito.
+- `mosaic/desktop.py`: la finestra nativa; `mosaic/cli.py`: i comandi da riga di comando.
+
 ## Requisiti
 
 - Windows 10/11, Python ≥ 3.12. È testato con 3.14.4.
 - Circa 3,5 GB di spazio per modelli e programmi, più la cache delle miniature (circa 0,3 MB per foto).
 - Non serve installare nient'altro: exiftool, ffmpeg e llama.cpp vengono scaricati in versione portabile in `runtime/`.
+
+## Installazione rapida
+
+1. Scarica o copia `MosaicSetup.exe` e avvialo.
+2. Scegli il disco: servono circa 6 GB liberi (4 GB senza LLM).
+3. Attendi: l'installer prepara Python, dipendenze, modelli e collegamenti.
+4. Apri **Mosaic** dal Desktop o dal menu Start e scegli la cartella delle foto.
+
+Da sorgente (sviluppo):
+
+```bash
+git clone https://github.com/joaopinton/Mosaic.git
+cd Mosaic
+powershell -ExecutionPolicy Bypass -File setup.ps1
+.venv/Scripts/python -m mosaic serve
+```
+
+Poi apri `http://127.0.0.1:8000`.
 
 ## Installazione su un altro PC
 
@@ -42,7 +163,7 @@ Copia `dist/MosaicSetup.exe` (circa 4 MB) sul PC di destinazione e avvialo. L'in
 2. controlla il PC (Windows 10/11 a 64 bit, spazio, RAM, rete e proxy, componenti Visual C++) e si adatta: con poca RAM o poco spazio salta il modello LLM, che si può aggiungere dopo rilanciando l'installazione;
 3. cerca un Python **3.12-3.14** a 64 bit (launcher `py`, registro, `PATH`, cartelle comuni). Uno più nuovo (3.15) o più vecchio, quello del Microsoft Store o uno a 32 bit si scartano, perché numpy, onnxruntime e rawpy non hanno le ruote per le altre versioni. Se non ce n'è uno adatto, o se con quello trovato le dipendenze non si installano, scarica l'installer ufficiale di Python 3.14.4 da python.org, ne verifica la firma digitale e lo installa dentro la cartella di Mosaic (senza toccare il PATH); se anche questo non riesce prova con winget;
 4. crea `.venv` (la ricrea se il suo Python è sparito) e installa le dipendenze, con nuovi tentativi in caso di rete instabile, poi controlla che si carichino davvero;
-5. scarica e verifica con SHA-256 i modelli e i programmi portabili (SigLIP 2, YuNet, SFace, exiftool, ffmpeg, llama.cpp, Qwen2.5-VL-3B);
+5. scarica e verifica con SHA-256 i modelli e i programmi portabili (SigLIP 2, YuNet, SFace, ArcFace, exiftool, ffmpeg, llama.cpp, Qwen3-VL-2B);
 6. controlla Microsoft Edge WebView2 (già presente su Windows 11) e, se manca, lo installa dal sito Microsoft dopo averne verificato la firma;
 7. crea i collegamenti sul Desktop e nel menu Start, registra la disinstallazione in Impostazioni > App e avvia Mosaic.
 
@@ -91,6 +212,25 @@ Da riga di comando:
 
 `mosaic index` esegue tutta la catena: indicizzazione, miniature, analisi, volti, moments, didascalie (se l'LLM è attivo), rinomina e backup. Gli altri comandi (`analyze`, `faces`, `moments`, `caption`, `cleanup`, `import`, `import-legacy`, `export`, `config`, `serve`) fanno un passo alla volta.
 
+Esempio di output (dati di esempio):
+
+```text
+$ python -m mosaic index "D:\Foto\PadovaMotoDays"
+[1/7] Indicizzazione   ████████████████████ 1.248 file (412 stack RAW+JPEG)
+[2/7] Miniature        ████████████████████ 1.248/1.248
+[3/7] Analisi          ████████████████████ etichette, colori, embedding
+[4/7] Volti            ████████████████████ 386 volti in primo piano, 27 persone
+[5/7] Moments          ████████████████████ 18 moments
+[6/7] Didascalie       ████████████████████ 1.248 descrizioni (locale)
+[7/7] Rinomina         ████████████████████ 1.248 file (journal salvato)
+Fatto in 41 min.
+
+$ python -m mosaic rename --dry-run
+0001_ducati-panigale-rossa.jpg   <-  DSC_4821.jpg (+ DSC_4821.xmp)
+0002_palco-concerto-chitarrista.jpg  <-  DSC_4822.jpg
+0003_piazza-prato-della-valle.jpg    <-  DSC_4830.jpg
+```
+
 ## Struttura
 
 | Cartella | Contenuto |
@@ -101,6 +241,8 @@ Da riga di comando:
 | `data/` | database e cache, spostabile da `config.yaml` |
 | `_legacy/` | il vecchio Mosaic, archiviato e intatto |
 | `docs/rebuild/` | documentazione della ricostruzione |
+| `docs/images/` | screenshot dell'app usati in questo README |
+| `docs/mock_photos/` | foto di esempio (generate con AI) per provare l'app |
 
 ## Documentazione
 
@@ -110,18 +252,36 @@ Da riga di comando:
 - [DECISIONS.md](docs/rebuild/DECISIONS.md): le scelte di progetto, separate dal comportamento osservato.
 - [VERIFICATION.md](docs/rebuild/VERIFICATION.md): verifica finale funzione per funzione.
 
-## Licenze
+## Domande frequenti
+
+**Le mie foto escono dal PC?** No. Tutto gira in locale. L'unica eccezione è facoltativa e spenta di default: le didascalie con NVIDIA/OpenRouter (vedi sopra).
+
+**Mosaic modifica i miei originali?** Può rinominarli (con journal, dry-run e rollback). Fai comunque una copia di sicurezza.
+
+**Serve una GPU?** No, tutto funziona su CPU. Con 8 GB di RAM l'LLM locale impiega circa 17 s a foto.
+
+**Posso usarlo per lavoro?** No: la licenza è solo per uso personale (vedi sotto).
+
+## Licenza
+
+Mosaic è distribuito con una **licenza per uso personale e non commerciale**: il testo completo è in [LICENSE](LICENSE). Puoi usarlo e modificarlo sulle tue foto; non puoi venderlo, offrirlo come servizio né usarlo in attività commerciali o professionali.
+
+Questa scelta deriva dallo stack: alcuni componenti hanno licenze che ammettono solo l'uso personale o non commerciale (ArcFace/InsightFace, Qwen Research).
+
+### Licenze dei componenti
 
 Le strategie di PhotoPrism (AGPL-3.0) sono reimplementate senza copiarne il codice. Licenze dei modelli e dei programmi:
 
-| Componente | Licenza |
-|---|---|
-| SigLIP 2 | Apache-2.0 |
-| YuNet | MIT |
-| SFace | Apache-2.0 |
-| Qwen2.5-VL-3B | Qwen Research (uso personale) |
-| llama.cpp | MIT |
-| exiftool | Artistic/GPL |
-| ffmpeg | GPL |
+| Componente | Licenza | Uso |
+|---|---|---|
+| SigLIP 2 | Apache-2.0 | libero |
+| YuNet | MIT | libero |
+| SFace | Apache-2.0 | libero |
+| ArcFace (InsightFace buffalo_l) | InsightFace | **solo non commerciale** |
+| Qwen3-VL-2B (LLM predefinito) | Apache-2.0 | libero |
+| Qwen2.5-VL-3B (LLM opzionale) | Qwen Research | **solo uso personale** |
+| llama.cpp | MIT | libero |
+| exiftool | Artistic/GPL | programma separato |
+| ffmpeg | GPL | programma separato |
 
 Dettagli in [DECISIONS.md](docs/rebuild/DECISIONS.md), D-14.

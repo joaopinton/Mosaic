@@ -1,0 +1,37 @@
+Mosaic - Licenza per uso personale (Personal Use Only License)
+
+Copyright (c) 2026 Gli autori di Mosaic. Tutti i diritti riservati.
+
+1. CONCESSIONE
+   È concesso a chiunque, a titolo gratuito, di scaricare, installare, eseguire
+   e modificare questo software esclusivamente per uso PERSONALE e NON
+   COMMERCIALE, sulle proprie foto e sui propri video.
+
+2. USI NON CONSENTITI
+   È vietato:
+   a) usare il software, o parti di esso, in attività commerciali, professionali
+      o a scopo di lucro (inclusi servizi a pagamento, consulenze, gestione di
+      archivi di clienti);
+   b) vendere, noleggiare, concedere in sublicenza o ridistribuire il software
+      o sue versioni modificate a fini commerciali;
+   c) offrire il software come servizio (SaaS) a terze parti.
+
+3. REDISTRIBUZIONE
+   È consentito condividere il software in forma gratuita e non commerciale,
+   mantenendo intatti questo file e gli avvisi di copyright.
+
+4. COMPONENTI DI TERZI
+   Mosaic scarica e usa modelli e programmi di terze parti, ciascuno con la
+   propria licenza (vedi la sezione "Licenze" del README). In particolare:
+   - ArcFace (InsightFace, buffalo_l) è valido solo per uso non commerciale;
+   - Qwen2.5-VL-3B (opzionale) è sotto licenza Qwen Research, solo uso personale.
+   Questa licenza non modifica né sostituisce quelle dei componenti di terze
+   parti, che restano di proprietà dei rispettivi autori.
+
+5. NESSUNA GARANZIA
+   IL SOFTWARE È FORNITO "COSÌ COM'È", SENZA GARANZIE DI ALCUN TIPO, ESPLICITE O
+   IMPLICITE, INCLUSE QUELLE DI COMMERCIABILITÀ, IDONEITÀ A UNO SCOPO
+   PARTICOLARE E NON VIOLAZIONE. IN NESSUN CASO GLI AUTORI SONO RESPONSABILI DI
+   DANNI, PERDITE DI DATI O ALTRE RESPONSABILITÀ DERIVANTI DALL'USO DEL
+   SOFTWARE. Mosaic può rinominare i file originali: fai sempre una copia di
+   sicurezza delle tue foto.
