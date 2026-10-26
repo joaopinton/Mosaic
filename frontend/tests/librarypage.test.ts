@@ -5,7 +5,7 @@ import { mockMatchMedia } from './setup'
 
 const api = vi.hoisted(() => ({
   libraryRoots: vi.fn(), unlinkRoot: vi.fn(), excluded: vi.fn(), restoreExcluded: vi.fn(), putConfig: vi.fn(), index: vi.fn(),
-  renameBatches: vi.fn(), config: vi.fn(), status: vi.fn(), jobs: vi.fn(),
+  renameBatches: vi.fn(), config: vi.fn(), status: vi.fn(), jobs: vi.fn(), pickFolder: vi.fn(), relinkRoot: vi.fn(),
 }))
 vi.mock('../src/lib/api', async (original) => ({ ...(await original<typeof import('../src/lib/api')>()), api }))
 
@@ -141,5 +141,24 @@ describe('Libreria: foto tolte dal catalogo', () => {
     await mountPage({ roots: [{ path: 'D:\\Foto', linked: true, photos: 1 }], unlinked: [] }, [excludedFile(1)])
     await click('[data-test="excluded-restore-all"]')
     expect(api.restoreExcluded).toHaveBeenCalledWith(undefined)
+  })
+})
+
+
+describe('LibraryPage: cartella spostata', () => {
+  it('una cartella che non esiste più si ricollega indicando la nuova posizione', async () => {
+    api.pickFolder.mockResolvedValue({ folder: 'D:\Nuova\Foto' })
+    api.relinkRoot.mockResolvedValue({ job: 9, files: 3 })
+    await mountPage({ roots: [{ path: 'D:\Foto', linked: true, photos: 120, exists: false }], unlinked: [] })
+    expect(document.body.querySelector('[data-test="root-missing"]')).not.toBeNull()
+    await click('[data-test="root-relocate"]')
+    expect((document.body.querySelector('[data-test="relink-path"]') as HTMLInputElement).value).toBe('D:\Nuova\Foto')
+    await click('[data-test="relink-confirm"]')
+    expect(api.relinkRoot).toHaveBeenCalledWith('D:\Foto', 'D:\Nuova\Foto')
+  })
+
+  it('una cartella presente non offre il ricollegamento', async () => {
+    await mountPage({ roots: [{ path: 'D:\Foto', linked: true, photos: 1, exists: true }], unlinked: [] })
+    expect(document.body.querySelector('[data-test="root-relocate"]')).toBeNull()
   })
 })

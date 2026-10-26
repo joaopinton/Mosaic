@@ -59,6 +59,31 @@ async function addRoot(): Promise<void> {
   }
 }
 
+/** La cartella è stata spostata o rinominata: si sceglie dov'è adesso e il catalogo (titoli, persone, album) la segue. */
+const relinkPath = ref('')
+const relinkFor = ref<LibraryRoot | null>(null)
+const canPickFolder = ref(true)
+
+async function askRelink(root: LibraryRoot): Promise<void> {
+  relinkFor.value = root
+  relinkPath.value = ''
+  try {
+    const { folder } = await api.pickFolder(root.path)
+    if (folder) relinkPath.value = folder
+  } catch {
+    canPickFolder.value = false // fuori dall'app desktop: si scrive il percorso
+  }
+}
+
+async function relinkMoved(): Promise<void> {
+  const root = relinkFor.value
+  const to = relinkPath.value.trim()
+  if (!root || !to) return
+  const ok = await run(() => api.relinkRoot(root.path, to), 'Cartella ricollegata: controllo le foto')
+  if (ok) relinkFor.value = null
+  await loadRoots()
+}
+
 async function unlinkRoot(): Promise<void> {
   const target = unlinkAsk.value
   unlinkAsk.value = null
@@ -137,6 +162,9 @@ watch(libraryVersion, () => { void loadBatches(); void loadRoots() })
         <li v-for="r in folders" :key="r.path" data-test="root"><Icon name="folder" /><span class="mono grow truncate">{{ r.path }}</span>
           <span v-if="r.photos" class="subtle small">{{ ASK_PHOTOS(r.photos) }}</span>
           <span v-if="!r.linked" class="chip to-verify">non più collegata</span>
+          <span v-if="r.exists === false" class="chip to-verify" data-test="root-missing">non trovata</span>
+          <button v-if="r.exists === false" type="button" class="btn sm" data-test="root-relocate" :disabled="busy"
+                  @click="askRelink(r)"><Icon name="folderOpen" /> Indica la nuova posizione…</button>
           <button type="button" class="btn ghost icon sm" data-test="root-unlink" :aria-label="`Scollega ${r.path} dalla libreria`"
                   :title="r.linked ? 'Scollega dalla libreria' : 'Togli dal catalogo'" :disabled="busy" @click="unlinkAsk = r"><Icon name="x" /></button></li>
       </ul>
@@ -250,6 +278,22 @@ watch(libraryVersion, () => { void loadBatches(); void loadRoots() })
       <template #footer>
         <button type="button" class="btn" @click="preview = null">Chiudi</button>
         <button type="button" class="btn primary" :disabled="!preview?.ops.length" @click="applyRename">Rinomina {{ preview?.files }} file</button>
+      </template>
+    </Dialog>
+
+    <Dialog :open="relinkFor !== null" title="Dove si trova adesso la cartella?" size="sm" @close="relinkFor = null">
+      <form v-if="relinkFor" class="field" @submit.prevent="relinkMoved">
+        <p class="hint">Mosaic cercava le foto in <span class="mono">{{ relinkFor.path }}</span>, ma non c'è più. Scegli la nuova posizione della
+          stessa cartella: titoli, persone, album e analisi restano e i percorsi si aggiornano da soli.</p>
+        <label for="relink-path">Nuova cartella</label>
+        <div class="row">
+          <input id="relink-path" v-model="relinkPath" class="input mono grow" autocomplete="off" spellcheck="false" data-test="relink-path" />
+          <button v-if="canPickFolder" type="button" class="btn" @click="askRelink(relinkFor)"><Icon name="folderOpen" /> Scegli…</button>
+        </div>
+      </form>
+      <template #footer>
+        <button type="button" class="btn" @click="relinkFor = null">Annulla</button>
+        <button type="button" class="btn primary" data-test="relink-confirm" :disabled="!relinkPath.trim()" @click="relinkMoved">Ricollega</button>
       </template>
     </Dialog>
 

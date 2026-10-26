@@ -152,6 +152,46 @@ def _remember_unlinked(ctx: Context, root: str) -> None:
         (UNLINKED_KEY, json.dumps(roots, ensure_ascii=False)))
 
 
+class RelinkError(ValueError):
+    """La nuova posizione non va bene per questa cartella."""
+
+
+SAMPLE = 60
+
+
+def relink_root(ctx: Context, old: str, new: str) -> int:
+    """La cartella della libreria è stata spostata o rinominata: il catalogo punta alla nuova posizione, senza perdere niente.
+
+    Si riscrivono i percorsi (file, cartelle, doppioni, esclusi) e la configurazione; titoli, persone, album e analisi
+    restano. Prima si controlla che le foto siano davvero lì (un campione): una cartella sbagliata non rompe il catalogo.
+    Se la nuova posizione è già nel catalogo non c'è niente da riscrivere: basta aggiungerla e indicizzare (le foto si
+    riconoscono dal contenuto). Ritorna quanti file sono stati ricollegati.
+    """
+    target = Path(new).expanduser()
+    if not new.strip() or not target.is_absolute() or not target.is_dir():
+        raise RelinkError("la nuova cartella non esiste: indica il percorso completo")
+    roots = [r for r in catalog_roots(ctx) if same_root(r, old)]
+    if not roots:
+        raise RelinkError("questa cartella non è nel catalogo")
+    if any(same_root(r, new) for r in catalog_roots(ctx)):
+        raise RelinkError("la nuova posizione è già nel catalogo: aggiungila alle cartelle e cerca le nuove foto, "
+                          "Mosaic riconosce le foto dal contenuto")
+    marks = _marks(len(roots))
+    rows = ctx.db.all(f"SELECT dir, name FROM files WHERE root IN ({marks}) AND media_type!='sidecar' ORDER BY id LIMIT ?",
+                      (*roots, SAMPLE * 10))
+    sample = rows[:: max(1, len(rows) // SAMPLE)] if rows else []
+    found = sum(1 for r in sample if (target / r["dir"] / r["name"] if r["dir"] else target / r["name"]).exists())
+    if sample and not found:
+        raise RelinkError("in quella cartella non ritrovo le foto di questa libreria: controlla di aver scelto "
+                          "la cartella giusta (con le stesse sottocartelle)")
+    root = str(target.resolve())
+    with ctx.db.tx() as tx:
+        files = tx.execute(f"UPDATE files SET root=?, missing=0 WHERE root IN ({marks})", (root, *roots)).rowcount
+        for table in ("folders", "duplicates", "excluded_files"):
+            tx.execute(f"UPDATE {table} SET root=? WHERE root IN ({marks})", (root, *roots))  # noqa: S608 (tabelle fisse)
+    return files
+
+
 def unlink_root(ctx: Context, root: str) -> UnlinkStats:
     """Toglie dal catalogo una cartella con le sue foto, miniature, embedding, volti, didascalie e album automatici.
 

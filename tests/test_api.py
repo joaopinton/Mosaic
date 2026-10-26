@@ -579,13 +579,13 @@ def test_unlink_root_route_detaches_the_folder_and_the_job_cleans_the_catalog(cl
 
     root = ctx.cfg.library_roots[0]
     listed = client.get("/api/library/roots").json()
-    assert listed["roots"] == [{"path": root, "linked": True, "photos": 3}] and listed["unlinked"] == []
+    assert listed["roots"] == [{"path": root, "linked": True, "photos": 3, "exists": True}] and listed["unlinked"] == []
 
     r = client.post("/api/library/roots/unlink", json={"root": root})
     assert r.status_code == 202 and r.json()["job"] > 0
     assert client.get("/api/status").json()["library_roots"] == []  # fuori dalla configurazione subito
     stale = client.get("/api/library/roots").json()
-    assert stale["roots"] == [{"path": root, "linked": False, "photos": 3}]  # ancora nel catalogo finché il job non gira
+    assert stale["roots"] == [{"path": root, "linked": False, "photos": 3, "exists": True}]  # ancora nel catalogo finché il job non gira
 
     job = m.runner.queue.claim({"unlink"})
     assert job is not None and job.payload == {"root": root}

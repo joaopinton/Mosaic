@@ -245,7 +245,7 @@ def index_roots(
             continue  # la cartella è stata scollegata mentre l'indice girava
         root_path = Path(raw_root)
         if not root_path.is_dir():
-            ctx.db.log_error("index", raw_root, "cartella della libreria non trovata")
+            ctx.db.log_error("index", raw_root, "cartella della libreria non trovata (spostata o rinominata? In Libreria usa «Indica la nuova posizione»)")
             stats.errors += 1
             continue
         root = str(root_path.resolve())

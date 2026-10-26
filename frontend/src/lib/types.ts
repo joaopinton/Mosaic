@@ -128,6 +128,7 @@ export interface CalendarYear { year: number; months: { month: number; title: st
 export interface Status {
   first_run: boolean
   library_roots: string[]
+  missing_roots?: string[]
   photos: number
   videos: number
   analyzed: number
@@ -147,7 +148,7 @@ export interface Status {
 export type DeleteMode = 'catalog' | 'trash'
 
 export interface RemoveResult { removed: number; files: number; mode: DeleteMode; failed: { uid: string; error: string }[] }
-export interface LibraryRoot { path: string; linked: boolean; photos: number }
+export interface LibraryRoot { path: string; linked: boolean; photos: number; exists?: boolean }
 export interface LibraryRoots { roots: LibraryRoot[]; unlinked: string[] }
 export interface ExcludedFile { sha1: string; name: string; path: string; size: number; excluded_at: string; exists: boolean }
 

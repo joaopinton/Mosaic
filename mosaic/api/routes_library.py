@@ -27,6 +27,7 @@ from mosaic.api.schemas import (
     RenameRequest,
     RestoreExcluded,
     RollbackRequest,
+    RelinkRoot,
     UnlinkRoot,
 )
 from mosaic.assets import status as assets_status
@@ -48,6 +49,7 @@ def status(m: Mosaic = Depends(get_mosaic)) -> dict[str, Any]:
     assets = assets_status()
     return {
         "version": __version__,
+        "missing_roots": [r for r in m.cfg.library_roots if not Path(r).is_dir()],
         "first_run": not m.cfg.library_roots,
         "library_roots": list(m.cfg.library_roots),
         "photos": db.scalar("SELECT COUNT(*) FROM photos WHERE deleted_at IS NULL"),
@@ -75,7 +77,9 @@ def get_config(m: Mosaic = Depends(get_mosaic)) -> dict[str, Any]:
 def put_config(body: ConfigPatch, m: Mosaic = Depends(get_mosaic)) -> dict[str, Any]:
     changes = body.changes
     for root in changes.get("library_roots", []):
-        if not isinstance(root, str) or not Path(root).is_dir():
+        already = isinstance(root, str) and any(catalog.same_root(root, c) for c in m.cfg.library_roots)
+        # una cartella già configurata ma spostata non deve impedire di salvare le altre: la si ricollega a parte
+        if not already and (not isinstance(root, str) or not Path(root).is_dir()):
             raise HTTPException(400, f"cartella non trovata: {root}")
     try:
         new = config_mod.update(m.cfg, changes)
@@ -202,9 +206,24 @@ def library_roots(m: Mosaic = Depends(get_mosaic)) -> dict[str, Any]:
         return sum(n for root, n in counts.items() if catalog.same_root(root, path))
 
     stale = [r for r in catalog.catalog_roots(m.ctx) if not any(catalog.same_root(r, c) for c in configured)]
-    return {"roots": [{"path": r, "linked": True, "photos": photos(r)} for r in configured]
-                     + [{"path": r, "linked": False, "photos": photos(r)} for r in stale],
+    return {"roots": [{"path": r, "linked": True, "photos": photos(r), "exists": Path(r).is_dir()} for r in configured]
+                     + [{"path": r, "linked": False, "photos": photos(r), "exists": Path(r).is_dir()} for r in stale],
             "unlinked": catalog.unlinked_roots(m.ctx)}
+
+
+@router.post("/library/roots/relink", status_code=202)
+def library_relink(body: RelinkRoot, m: Mosaic = Depends(get_mosaic)) -> dict[str, Any]:
+    """La cartella è stata spostata: il catalogo e la configurazione puntano alla nuova posizione e parte l'indicizzazione."""
+    try:
+        files = catalog.relink_root(m.ctx, body.old, body.new)
+    except catalog.RelinkError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    target = str(Path(body.new).resolve())
+    roots = [target if catalog.same_root(r, body.old) else r for r in m.cfg.library_roots]
+    if not any(catalog.same_root(r, target) for r in roots):
+        roots.append(target)
+    m.reload_config(config_mod.update(m.cfg, {"library_roots": list(dict.fromkeys(roots))}))
+    return {"files": files, **_submit(m, "index", {"rescan": False})}
 
 
 @router.post("/library/roots/unlink", status_code=202)

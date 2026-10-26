@@ -5,7 +5,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { installHotkeys } from '../lib/hotkeys'
 import { useMediaQuery } from '../lib/useMediaQuery'
 import {
-  clearSelection, gridSource, hasSelection, refreshJobs, refreshStatus, searchRequest, selectAllInView, setSidebarPreference, sidebar, startEvents,
+  clearSelection, gridSource, hasSelection, refreshJobs, refreshStatus, status, searchRequest, selectAllInView, setSidebarPreference, sidebar, startEvents,
 } from '../lib/store'
 import { errorMessage, toast } from '../lib/toast'
 import { redo, undo } from '../lib/undo'
@@ -69,9 +69,17 @@ watch(() => route.path, () => {
   gridSource.value = null
 })
 
+/** All'avvio: se una cartella della libreria è stata spostata lo si dice subito, con la strada per ricollegarla. */
+function warnMissingRoots(): void {
+  const missing = status.value?.missing_roots ?? []
+  if (!missing.length) return
+  toast(`${missing.length === 1 ? 'Una cartella della libreria non si trova più' : `${missing.length} cartelle della libreria non si trovano più`}: spostata o rinominata?`,
+        'error', { label: 'Sistema', run: () => void router.push('/library') }, 15000)
+}
+
 let cleanup: (() => void)[] = []
 onMounted(() => {
-  void refreshStatus()
+  void refreshStatus().then(warnMissingRoots)
   void refreshJobs()
   cleanup = [
     startEvents(),

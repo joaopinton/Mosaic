@@ -200,6 +200,11 @@ class UnlinkRoot(BaseModel):
     root: str = Field(min_length=1, max_length=1000)
 
 
+class RelinkRoot(BaseModel):
+    old: str = Field(min_length=1, max_length=1000)
+    new: str = Field(min_length=1, max_length=1000)
+
+
 class RestoreExcluded(BaseModel):
     sha1s: list[str] | None = Field(default=None, max_length=5000)
 

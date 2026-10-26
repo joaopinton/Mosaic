@@ -93,6 +93,7 @@ export const api = {
   index: (rescan = false) => post<{ job: number }>('/api/library/index', { rescan }),
   importFolder: (source: string, move: boolean) => post<{ job: number }>('/api/library/import', { source, move }),
   libraryRoots: () => get<LibraryRoots>('/api/library/roots'),
+  relinkRoot: (old: string, to: string) => post<{ job: number; files: number }>('/api/library/roots/relink', { old, new: to }),
   unlinkRoot: (root: string) => post<{ job: number }>('/api/library/roots/unlink', { root }),
   excluded: () => get<ExcludedFile[]>('/api/excluded'),
   restoreExcluded: (sha1s?: string[]) => post<{ restored: number; job: number }>('/api/excluded/restore', { sha1s }),

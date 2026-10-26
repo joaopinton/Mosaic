@@ -384,3 +384,84 @@ def test_root_filter_selects_a_whole_root_with_its_subfolders(ctx):
     assert found == {"a1", "a2"}
     assert {p["uid"] for p in query.search(ctx, "radice:B").photos} == {"b1"}
     assert {p["uid"] for p in query.search(ctx, "-root:A").photos} == {"b1"}
+
+
+# --- cartella della libreria spostata (D-37) ---------------------------------------------------------------
+
+def _indexed(ctx, library):
+    from conftest import make_jpeg
+    from mosaic.index.indexer import index_roots
+
+    for i in range(3):
+        make_jpeg(library / "sub" / f"f{i}.jpg", color=(i * 40, 10, 10))
+    index_roots(ctx)
+    ctx.db.conn().execute("UPDATE photos SET title='Mio', title_src=64")
+
+
+def test_relink_keeps_everything_when_the_root_moves(ctx, library, tmp_path):
+    import shutil
+
+    from mosaic.organize import catalog
+
+    _indexed(ctx, library)
+    old = str(library)
+    new = tmp_path / "Foto spostate"
+    shutil.move(old, str(new))
+    assert catalog.relink_root(ctx, old, str(new)) == 3
+    assert {r["root"] for r in ctx.db.all("SELECT root FROM files")} == {str(new.resolve())}
+    assert {r["root"] for r in ctx.db.all("SELECT root FROM folders")} == {str(new.resolve())}
+    assert ctx.db.scalar("SELECT COUNT(*) FROM photos WHERE title='Mio'") == 3
+    from mosaic.index.indexer import index_roots
+    stats = index_roots(ctx, [str(new)])
+    assert stats.new_photos == 0 and stats.missing == 0
+
+
+def test_relink_refuses_a_wrong_folder_and_leaves_the_catalog_alone(ctx, library, tmp_path):
+    import pytest
+
+    from mosaic.organize import catalog
+
+    _indexed(ctx, library)
+    wrong = tmp_path / "altra"
+    wrong.mkdir()
+    with pytest.raises(catalog.RelinkError, match="non ritrovo"):
+        catalog.relink_root(ctx, str(library), str(wrong))
+    with pytest.raises(catalog.RelinkError, match="non esiste"):
+        catalog.relink_root(ctx, str(library), str(tmp_path / "nulla"))
+    assert ctx.db.scalar("SELECT COUNT(*) FROM files WHERE root=?", (str(library.resolve()),)) == 3
+
+
+def test_relink_api_updates_config_and_a_dead_root_does_not_block_saving(client, ctx, library, tmp_path):
+    import shutil
+
+    c, m = client
+    _indexed(ctx, library)
+    m.reload_config(__import__("mosaic.config", fromlist=["update"]).update(m.cfg, {"library_roots": [str(library)]}))
+    old = str(library)
+    new = tmp_path / "Nuova"
+    shutil.move(old, str(new))
+    assert c.get("/api/status").json()["missing_roots"] == [old]
+    extra = tmp_path / "extra"
+    extra.mkdir()
+    assert c.put("/api/config", json={"changes": {"library_roots": [old, str(extra)]}}).status_code == 200  # prima: 400
+    res = c.post("/api/library/roots/relink", json={"old": old, "new": str(new)})
+    assert res.status_code == 202 and res.json()["files"] == 3
+    roots = c.get("/api/library/roots").json()["roots"]
+    assert [r["path"] for r in roots] == [str(new.resolve()), str(extra.resolve())] and all(r["exists"] for r in roots)
+    assert c.post("/api/library/roots/relink", json={"old": old, "new": str(tmp_path / "boh")}).status_code == 400
+
+
+import pytest as _pytest
+
+
+@_pytest.fixture()
+def client(ctx, tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from mosaic.api.app import create_app
+    from mosaic.service import Mosaic
+
+    monkeypatch.setenv("MOSAIC_CONFIG", str(tmp_path / "config.yaml"))
+    m = Mosaic(ctx)
+    yield TestClient(create_app(m, allowed_hosts={"testserver"}, start_workers=False)), m
+    m.runner.stop()
