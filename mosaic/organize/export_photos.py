@@ -74,6 +74,7 @@ class Result:
     cropped: int = 0
     skipped: int = 0
     unimproved: int = 0
+    not_found: int = 0   # l'originale non c'è più dove il catalogo dice (spostato, rinominato, disco scollegato)
     converted: int = 0
     errors: list[str] = field(default_factory=list)
 
@@ -339,7 +340,30 @@ def export(ctx: Context, uids: list[str], dest: Path, opts: Options,
         _export_item(ctx, item, dest, taken, adjusts.get(item.photo_id), opts, result, prefix)
         if progress:
             progress(done + 1, len(items), f"{done + 1} di {len(items)} foto")
+    if result.not_found:
+        _flag_missing(ctx, items)
+    if result.copied == 0 and not (cancel is not None and cancel.is_set()):
+        for error in result.errors[:20]:
+            ctx.db.log_error("export", "", error)
+        raise ExportError(_nothing_exported(result, len(items)))
     return result
+
+
+def _nothing_exported(result: Result, total: int) -> str:
+    """Perché non è stata esportata nessuna foto, in parole che dicono cosa fare."""
+    if result.not_found:
+        return (f"nessuna foto esportata: {result.not_found} su {total} non si trovano più dove Mosaic le ha registrate "
+                "(cartella o foto spostata o rinominata, disco scollegato?). In Libreria usa «Indica la nuova posizione…» "
+                "se hai spostato la cartella, oppure «Cerca nuove foto»")
+    return f"nessuna foto esportata ({result.errors[0]})" if result.errors else "nessuna foto esportata"
+
+
+def _flag_missing(ctx: Context, items: list[_Item]) -> None:
+    """I file che non esistono più su disco si segnano mancanti, come farebbe una verifica della libreria."""
+    gone = [f["id"] for item in items for f in (item.main, *item.extra) if not abs_path(f).exists()]
+    if gone:
+        with ctx.db.tx() as conn:
+            conn.executemany("UPDATE files SET missing=1 WHERE id=?", [(i,) for i in gone])
 
 
 def _export_item(ctx: Context, item: _Item, dest: Path, taken: set[str], adjust: enhance.Adjust | None,
@@ -348,6 +372,10 @@ def _export_item(ctx: Context, item: _Item, dest: Path, taken: set[str], adjust:
     name = main["name"]
     wants_look = opts.enhance is not None and opts.enhance.active and _can_enhance(main)
     ext = _out_format(opts)[1]
+    if not abs_path(main).exists():  # spostata o rinominata dopo l'indicizzazione
+        result.not_found += 1
+        result.errors.append(f"{name}: file non trovato ({abs_path(main)})")
+        return
     try:
         if opts.crop is not None:  # niente ripiego sulla copia identica: si vogliono solo foto nel formato scelto
             try:
@@ -374,6 +402,9 @@ def _export_item(ctx: Context, item: _Item, dest: Path, taken: set[str], adjust:
         for extra in item.extra:
             shutil.copy2(abs_path(extra), _free_name(dest, prefix + extra["name"], taken))
         result.copied += 1
+    except FileNotFoundError as exc:
+        result.not_found += 1
+        result.errors.append(f"{name}: file non trovato ({exc})")
     except OSError as exc:
         result.errors.append(f"{name}: {exc}")
 

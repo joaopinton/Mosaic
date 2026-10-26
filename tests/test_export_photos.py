@@ -195,3 +195,20 @@ def test_crop_and_enhance_still_write_jpegs_with_the_new_writer(ctx, photos, tmp
         with Image.open(path) as img:
             assert img.format == "JPEG" and img.width == img.height
     assert not list(dest.glob("*.tmp"))
+
+
+def test_export_fails_loudly_when_the_originals_are_not_where_the_catalog_says(ctx, photos, tmp_path):
+    root = Path(ctx.cfg.library_roots[0])
+    moved = tmp_path / "spostata"
+    import shutil
+    shutil.move(str(root), str(moved))
+    with pytest.raises(export_photos.ExportError, match="non si trovano più"):
+        export_photos.export(ctx, photos, tmp_path / "out", export_photos.Options())
+    assert ctx.db.scalar("SELECT COUNT(*) FROM files WHERE missing=1") >= 3  # ora risultano mancanti nel catalogo
+
+
+def test_partial_export_still_succeeds_and_reports_the_missing_ones(ctx, photos, tmp_path):
+    original = abs_path(primary_file(ctx.db, ctx.db.one("SELECT id FROM photos WHERE uid=?", (photos[0],))["id"]))
+    original.unlink()
+    result = export_photos.export(ctx, photos, tmp_path / "parziale", export_photos.Options())
+    assert result.copied == 2 and result.not_found == 1

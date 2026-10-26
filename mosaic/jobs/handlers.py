@@ -262,8 +262,10 @@ def h_export(ctx: Context, job: Job, ctl: JobControl) -> None:
              if n]
     if result.skipped and (crop or not opts.videos):
         notes.append(f"{result.skipped} saltate")  # con il ritaglio: video e file illeggibili
-    if result.errors:
-        notes.append(f"{len(result.errors)} con problemi")
+    if result.not_found:
+        notes.append(f"{result.not_found} non trovate sul disco (spostate o rinominate?)")
+    if len(result.errors) > result.not_found:
+        notes.append(f"{len(result.errors) - result.not_found} con problemi")
     where = "pronte da scaricare" if as_zip else f"esportate in {result.folder}"
     ctl.progress(1.0, f"{result.copied} foto {where}" + "".join(f", {n}" for n in notes))
 

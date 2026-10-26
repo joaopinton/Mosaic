@@ -90,8 +90,8 @@ def test_pixel_format_and_enhance_together(ctx, shots, tmp_path):
 
 def test_a_photo_that_cannot_be_cropped_is_not_copied_as_it_was(ctx, shots, tmp_path, monkeypatch):
     monkeypatch.setattr(export_photos, "ensure_source", lambda *_: None)
-    result = export_photos.export(ctx, [shots["anna.jpg"][1]], tmp_path / "Rotte", export_photos.Options(crop=Format(1, 1)))
-    assert result.copied == 0 and "non ritagliata" in result.errors[0]
+    with pytest.raises(export_photos.ExportError, match="non ritagliata"):  # niente «finito» con 0 foto
+        export_photos.export(ctx, [shots["anna.jpg"][1]], tmp_path / "Rotte", export_photos.Options(crop=Format(1, 1)))
     assert not list((tmp_path / "Rotte").glob("*.jpg"))
 
 
