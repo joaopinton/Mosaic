@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import sqlite3
 import threading
 from collections.abc import Iterator
@@ -10,7 +11,10 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+log = logging.getLogger(__name__)
+
 SCHEMA_FILE = Path(__file__).with_name("schema.sql")
+BACKUPS_KEPT = 3
 
 # Migrazioni successive alla 1 (lo schema iniziale): (versione, script SQL).
 MIGRATIONS: list[tuple[int, str]] = [
@@ -63,6 +67,13 @@ MIGRATIONS: list[tuple[int, str]] = [
         ALTER TABLE albums ADD COLUMN title_manual INTEGER NOT NULL DEFAULT 0;
     """),
 ]
+
+
+LATEST_VERSION = MIGRATIONS[-1][0]
+
+
+class DatabaseTooNewError(RuntimeError):
+    """Il database è stato scritto da una versione di Mosaic più recente di questa: non lo si apre per non rovinarlo."""
 
 
 def utcnow() -> str:
@@ -125,6 +136,13 @@ class Database:
         «table already exists» a metà (successo davvero con due doppi clic su Mosaic.exe).
         """
         conn = self.conn()
+        current = conn.execute("PRAGMA user_version").fetchone()[0]
+        if current > LATEST_VERSION:
+            raise DatabaseTooNewError(
+                f"Il catalogo è della versione {current}, più recente di questa copia di Mosaic ({LATEST_VERSION}). "
+                "Installa la versione più recente di Mosaic: così le tue foto non si rovinano.")
+        if 0 < current < LATEST_VERSION:
+            self._backup_before_migrating(conn, current)
         steps = [(1, SCHEMA_FILE.read_text(encoding="utf-8")), *MIGRATIONS]
         version = 0
         for target, script in steps:
@@ -141,6 +159,18 @@ class Database:
                 raise
             conn.execute("COMMIT")
         return version
+
+    def _backup_before_migrating(self, conn: sqlite3.Connection, version: int) -> None:
+        """Copia coerente del catalogo prima di aggiornarne lo schema (`VACUUM INTO`); si tengono le ultime tre."""
+        folder = self.path.parent / "backups"
+        target = folder / f"{self.path.stem}-v{version}-{datetime.now(UTC).strftime('%Y%m%d-%H%M%S')}.db"
+        try:
+            folder.mkdir(parents=True, exist_ok=True)
+            conn.execute("VACUUM INTO ?", (str(target),))
+            for old in sorted(folder.glob(f"{self.path.stem}-v*.db"), key=lambda p: p.stat().st_mtime, reverse=True)[BACKUPS_KEPT:]:
+                old.unlink(missing_ok=True)
+        except (sqlite3.Error, OSError):  # senza spazio per la copia si migra comunque: sono solo aggiunte, in transazione
+            log.warning("copia di sicurezza del catalogo non riuscita", exc_info=True)
 
     def close(self) -> None:
         conn = getattr(self._local, "conn", None)

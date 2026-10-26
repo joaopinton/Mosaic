@@ -42,7 +42,7 @@ describe('Dropdown', () => {
 
 describe('ExportDialog', () => {
   const open = () => {
-    const w = mount(ExportDialog, { props: { open: true, uids: ['p1', 'p2'], title: 'Festa' }, attachTo: document.body })
+    const w = mount(ExportDialog, { props: { open: true, uids: ['p1', 'p2'], title: 'Festa', mode: 'folder' }, attachTo: document.body })
     mounted.push(w)
     return w
   }
@@ -60,6 +60,7 @@ describe('ExportDialog', () => {
     expect(api.exportPhotos).toHaveBeenCalledWith({
       uids: ['p1', 'p2'], dest: 'C:\\Users\\me\\Desktop\\Festa', raw: false, videos: true,
       enhance: { light: true, contrast: true, vivid: true, harmonize: true, strength: 'medium' }, crop: null,
+      zip: false, zip_name: 'Festa', fmt: 'original', quality: 92, max_side: null, numbered: false,
     })
     store.jobs.value = [{ id: 7, type: 'export', state: 'done', progress: 1, message: '2 foto esportate', error: '', created_at: '', finished_at: '', done: 2, total: 2 }]
     await nextTick()

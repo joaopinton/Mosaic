@@ -126,3 +126,72 @@ def test_api_preview_default_dir_and_dialog(client, photos):
     assert len(shots) == 3 and all(s["before"].startswith("data:image/jpeg") and s["after"] != s["before"] for s in shots)
     assert c.get("/api/exports/default-dir", params={"title": "Festa/Notte"}).json()["folder"].endswith("Festa Notte")
     assert c.post("/api/dialog/folder", json={}).status_code == 501  # fuori dall'app desktop
+
+
+def test_convert_resize_and_number(ctx, photos, tmp_path):
+    dest = tmp_path / "conv"
+    opts = export_photos.Options(fmt="webp", quality=70, max_side=100, numbered=True)
+    result = export_photos.export(ctx, photos, dest, opts)
+    files = sorted(dest.iterdir())
+    assert result.copied == 3 and result.converted == 3 and not result.errors
+    assert [f.name[:5] for f in files] == ["0001_", "0002_", "0003_"] and all(f.suffix == ".webp" for f in files)
+    for f in files:
+        with Image.open(f) as img:
+            assert img.format == "WEBP" and max(img.size) == 100
+
+
+def test_max_side_never_upscales(ctx, photos, tmp_path):
+    dest = tmp_path / "small"
+    export_photos.export(ctx, photos, dest, export_photos.Options(fmt="png", max_side=5000))
+    with Image.open(next(dest.glob("c.png"))) as img:
+        assert img.format == "PNG" and img.size == (300, 300)
+
+
+def test_failed_write_leaves_no_tmp_file(ctx, photos, tmp_path, monkeypatch):
+    dest = tmp_path / "rotto"
+    monkeypatch.setattr(export_photos.os, "replace", lambda *_: (_ for _ in ()).throw(OSError("disco pieno")))
+    result = export_photos.export(ctx, photos, dest, export_photos.Options(fmt="jpeg"))
+    assert result.errors and not list(dest.glob("*.tmp"))
+
+
+def test_zip_download_via_api(client, photos, ctx):
+    import zipfile
+
+    from mosaic.jobs.handlers import h_export
+    from mosaic.jobs.queue import Job
+
+    c, m = client
+    res = c.post("/api/exports", json={"uids": photos, "zip": True, "zip_name": "Gita: 2026", "fmt": "jpeg", "numbered": True})
+    assert res.status_code == 202 and res.json()["folder"] == ""
+    job_id = res.json()["job"]
+    assert c.get(f"/api/exports/{job_id}/download").status_code == 404  # non ancora pronto
+    row = m.runner.queue.get(job_id)
+
+    class Ctl:
+        cancel = threading.Event()
+
+        def progress(self, *_args):
+            pass
+
+    h_export(ctx, Job(job_id, "export", json.loads(row["payload"])), Ctl())
+    m.runner.queue.finish(job_id, "done", "")
+    got = c.get(f"/api/exports/{job_id}/download")
+    assert got.status_code == 200 and "Gita%202026.zip" in got.headers["content-disposition"]
+    zpath = ctx.data_dir / "x.zip"
+    zpath.write_bytes(got.content)
+    with zipfile.ZipFile(zpath) as zf:
+        assert len(zf.namelist()) == 3 and zf.namelist()[0].startswith("0001_")
+    assert not list((ctx.data_dir / "cache" / "exports").glob("staging-*"))  # la cartella di lavoro non resta
+    assert c.post("/api/exports", json={"uids": photos}).status_code == 422  # senza cartella né zip
+
+
+def test_crop_and_enhance_still_write_jpegs_with_the_new_writer(ctx, photos, tmp_path):
+    from mosaic.organize import smart_crop
+
+    dest = tmp_path / "quadrate"
+    result = export_photos.export(ctx, photos, dest, export_photos.Options(crop=smart_crop.Format(1, 1), enhance=enhance.Options()))
+    assert result.cropped == 3 and result.enhanced == 3 and not result.errors
+    for path in dest.iterdir():
+        with Image.open(path) as img:
+            assert img.format == "JPEG" and img.width == img.height
+    assert not list(dest.glob("*.tmp"))

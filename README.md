@@ -30,6 +30,8 @@ In più ci sono un motore di embedding moderno e un LLM locale incluso.
 - **Video e Live Photo**: anteprime, transcodifica quando serve, streaming.
 - **Crea selezione** da un album o da una cartella: scegli quante foto e il formato, Mosaic prende quelle venute meglio, diverse tra loro, lungo tutto l'evento e con più persone possibile, e le salvi come album.
 - **Poster a mosaico** stile Mondrian dalla selezione: anteprima dal vivo, formati da A4 a 70×100, file pronto da stampare in `Immagini\Mosaic`.
+- **Scarica ed esporta** da qualsiasi pagina con un solo dialogo: zip da scaricare o cartella, formato (originale, JPEG, PNG, WebP), qualità, dimensione, numerazione, ritaglio e miglioramento. **Ctrl+A** seleziona tutto, **Ctrl+Z / Ctrl+Y** annullano e ripetono (D-36).
+- **Aggiornamento senza reset**: lanciando il nuovo `MosaicSetup.exe` su un PC con Mosaic già installato si sostituisce solo il programma; foto, catalogo, persone, modelli e impostazioni restano (con copia di sicurezza del catalogo prima di aggiornarlo).
 - **Trascina e rilascia** foto, video, cartelle e file .zip nella finestra: le cartelle si collegano dove sono, senza copie.
 - **Attività sempre visibili**: barra di progresso con tempo rimanente, pannello con le fasi dell'elaborazione.
 - **Sincronizzazione con il computer** (Impostazioni): Mosaic solo come interfaccia, oppure eliminare in Mosaic = Cestino di Windows e viceversa.

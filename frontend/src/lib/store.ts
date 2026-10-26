@@ -1,5 +1,5 @@
-import { computed, reactive, ref } from 'vue'
-import { api } from './api'
+import { computed, reactive, ref, shallowRef } from 'vue'
+import { allUids, api } from './api'
 import type { CurateParams, Job, JobEvent, PhotoSummary, Status } from './types'
 
 // --- stato della libreria e dei job ---------------------------------------------------------------
@@ -190,10 +190,42 @@ export const currentAlbum = ref<{ uid: string; title: string } | null>(null)
 export const selected = ref<string[]>([])
 export const hasSelection = computed(() => selected.value.length > 0)
 
+/** Ultima foto scelta con un clic: il clic con Maiusc seleziona tutto l'intervallo fino a lì. */
+export const selectionAnchor = ref<string | null>(null)
+
+/** Da dove la griglia aperta prende le foto: serve a «Seleziona tutto» (Ctrl+A) per includere anche quelle non ancora caricate. */
+export const gridSource = shallowRef<{ query: string; items?: string[] } | null>(null)
+
+export function setSelected(uids: string[]): void {
+  selected.value = [...new Set(uids)]
+}
+
 export function toggleSelected(uid: string): void {
   selected.value = selected.value.includes(uid) ? selected.value.filter((u) => u !== uid) : [...selected.value, uid]
+  selectionAnchor.value = uid
+}
+
+/** Maiusc+clic: aggiunge alla selezione tutte le foto tra l'ultima scelta e `uid`, nell'ordine di `ordered`. */
+export function selectRange(uid: string, ordered: string[]): void {
+  const anchor = selectionAnchor.value
+  const from = anchor ? ordered.indexOf(anchor) : -1
+  const to = ordered.indexOf(uid)
+  if (from < 0 || to < 0) return toggleSelected(uid)
+  const [lo, hi] = from < to ? [from, to] : [to, from]
+  setSelected([...selected.value, ...ordered.slice(lo, hi + 1)])
+  selectionAnchor.value = uid
 }
 
 export function clearSelection(): void {
   selected.value = []
+  selectionAnchor.value = null
+}
+
+/** Ctrl+A: seleziona tutte le foto della vista aperta, anche quelle che lo scorrimento non ha ancora caricato. Ritorna quante. */
+export async function selectAllInView(): Promise<number> {
+  const source = gridSource.value
+  if (!source) return 0
+  const uids = source.items ?? (await allUids(source.query))
+  setSelected(uids)
+  return uids.length
 }

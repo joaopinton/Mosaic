@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import FileResponse
 
 from mosaic.api.deps import get_mosaic
 from mosaic.api.schemas import CropFormat, EnhanceOptions, ExportCropPreview, ExportPreview, ExportRequest, FolderPick
@@ -28,15 +29,29 @@ def _crop(body: CropFormat | None) -> dict[str, Any] | None:
 @router.post("/exports", status_code=202)
 def export_create(body: ExportRequest, m: Mosaic = Depends(get_mosaic)) -> dict[str, Any]:
     try:
-        dest = export_photos.check_dest(m.ctx, body.dest)
+        dest = Path(export_photos.zip_dir(m.ctx)) if body.zip else export_photos.check_dest(m.ctx, body.dest)
     except export_photos.ExportError as exc:
         raise HTTPException(400, str(exc)) from exc
     marks = ",".join("?" * len(body.uids))
     if m.ctx.db.one(f"SELECT 1 FROM photos WHERE uid IN ({marks}) LIMIT 1", tuple(body.uids)) is None:
         raise HTTPException(404, "nessuna foto trovata")
     payload = {"uids": body.uids, "dest": str(dest), "raw": body.raw, "videos": body.videos, "enhance": _enhance(body.enhance),
-               "crop": _crop(body.crop)}
-    return {"job": m.runner.submit("export", payload), "folder": str(dest)}
+               "crop": _crop(body.crop), "fmt": body.fmt, "quality": body.quality, "max_side": body.max_side,
+               "numbered": body.numbered, "zip": body.zip, "zip_name": export_photos.folder_name(body.zip_name)}
+    return {"job": m.runner.submit("export", payload), "folder": "" if body.zip else str(dest)}
+
+
+@router.get("/exports/{job_id}/download")
+def export_download(job_id: int, m: Mosaic = Depends(get_mosaic)) -> FileResponse:
+    """Lo zip di un'esportazione «Scarica»: un vero download del browser (attachment)."""
+    row = m.runner.queue.get(job_id)
+    if row is None or row["type"] != "export":
+        raise HTTPException(404, "esportazione non trovata")
+    payload = json.loads(row["payload"])
+    path = export_photos.zip_dir(m.ctx) / f"export-{job_id}.zip"
+    if not payload.get("zip") or row["state"] != "done" or not path.is_file():
+        raise HTTPException(404, "lo zip non è pronto o è scaduto")
+    return FileResponse(path, media_type="application/zip", filename=f"{payload.get('zip_name') or 'Foto Mosaic'}.zip")
 
 
 @router.get("/exports/default-dir")

@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { allUids, api } from '../lib/api'
-import { refreshJobs } from '../lib/store'
+import { hasSelection, refreshJobs, selected } from '../lib/store'
 import { errorMessage, toast } from '../lib/toast'
+import { pushUndo } from '../lib/undo'
 import type { Album } from '../lib/types'
 import Dialog from './Dialog.vue'
 import Dropdown from './Dropdown.vue'
@@ -37,9 +38,17 @@ function openDialog(which: typeof renaming): void {
   which.value = true
 }
 
+/** Con una selezione attiva si esporta quella; altrimenti l'album intero (avvisando se qualche foto non è arrivata). */
 async function exportAll(): Promise<void> {
   try {
-    exportUids.value = await allUids(`album:${props.album.uid}`)
+    if (hasSelection.value) {
+      exportUids.value = [...selected.value]
+    } else {
+      exportUids.value = await allUids(`album:${props.album.uid}`)
+      if (exportUids.value.length < props.album.photo_count) {
+        toast(`Attenzione: ne esporto ${exportUids.value.length} su ${props.album.photo_count}. Le altre non sono state caricate.`, 'error')
+      }
+    }
     openDialog(exporting)
   } catch (error) {
     toast(errorMessage(error), 'error')
@@ -60,7 +69,14 @@ async function rename(): Promise<void> {
   if (!title || busy.value) return
   busy.value = true
   try {
-    emit('changed', await api.patchAlbum(props.album.uid, { title }))
+    const uid = props.album.uid
+    const before = props.album.title
+    emit('changed', await api.patchAlbum(uid, { title }))
+    pushUndo({
+      label: `Nome «${before}»`,
+      undo: async () => emit('changed', await api.patchAlbum(uid, { title: before })),
+      redo: async () => emit('changed', await api.patchAlbum(uid, { title })),
+    })
     renaming.value = false
   } catch (error) {
     toast(errorMessage(error), 'error')
@@ -145,7 +161,7 @@ defineExpose({ exportAll })
 <template>
   <Dropdown :label="`Azioni su ${noun} «${album.title}»`" :btn-class="btnClass">
     <button type="button" class="menu-item" role="menuitem" data-test="am-export" :disabled="album.photo_count === 0" @click="exportAll">
-      <Icon name="download" /> Scarica / Esporta…
+      <Icon name="download" /> {{ hasSelection ? `Scarica / Esporta le ${selected.length} selezionate…` : 'Scarica / Esporta…' }}
     </button>
     <template v-if="album.path">
       <button type="button" class="menu-item" role="menuitem" data-test="am-reveal" @click="reveal"><Icon name="folderOpen" /> Apri nella cartella</button>

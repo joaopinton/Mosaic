@@ -125,13 +125,14 @@ export const api = {
 }
 
 export const thumbUrl = (hash: string | null | undefined, size = 'fit_720') => (hash ? `/t/${hash}/${size}` : '')
+export const exportDownloadUrl = (job: number) => `/api/exports/${job}/download`
 export const originalUrl = (uid: string) => `/api/files/${uid}/original`
 export const videoUrl = (uid: string) => `/api/videos/${uid}`
 export const liveUrl = (uid: string) => `/api/live/${uid}`
 const PAGE = 500
 
-/** Tutti gli uid di una ricerca (per esempio `album:<uid>`), a pagine, fino a `limit`: servono a esportare un album. */
-export async function allUids(q: string, limit = 5000): Promise<string[]> {
+/** Tutti gli uid di una ricerca (per esempio `album:<uid>`), a pagine, fino a `limit` (20000, quanto accetta il server): servono a esportare un album e a «Seleziona tutto». */
+export async function allUids(q: string, limit = 20000): Promise<string[]> {
   const uids: string[] = []
   for (let offset = 0; offset < limit; offset += PAGE) {
     const page = await api.photos({ q, count: Math.min(PAGE, limit - offset), offset })

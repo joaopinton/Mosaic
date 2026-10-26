@@ -15,7 +15,11 @@ const entries = Object.entries(GO_KEYS)
       <div v-for="[key, item] in entries" :key="key"><dt><kbd>g</kbd> poi <kbd>{{ key }}</kbd></dt><dd>{{ item.label }}</dd></div>
       <div><dt><kbd>←</kbd> <kbd>→</kbd></dt><dd>Foto precedente e successiva</dd></div>
       <div><dt><kbd>f</kbd></dt><dd>Preferita (nel dettaglio)</dd></div>
-      <div><dt><kbd>Esc</kbd></dt><dd>Chiude finestre e menu</dd></div>
+      <div><dt><kbd>Ctrl</kbd> <kbd>A</kbd></dt><dd>Seleziona tutte le foto della pagina</dd></div>
+      <div><dt><kbd>Maiusc</kbd> + clic</dt><dd>Seleziona un intervallo di foto</dd></div>
+      <div><dt><kbd>Ctrl</kbd> <kbd>Z</kbd></dt><dd>Annulla l'ultima azione</dd></div>
+      <div><dt><kbd>Ctrl</kbd> <kbd>Y</kbd> o <kbd>Ctrl</kbd> <kbd>Maiusc</kbd> <kbd>Z</kbd></dt><dd>Ripeti</dd></div>
+      <div><dt><kbd>Esc</kbd></dt><dd>Deseleziona; chiude finestre e menu</dd></div>
     </dl>
   </Dialog>
 </template>

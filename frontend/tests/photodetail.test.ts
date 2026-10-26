@@ -227,7 +227,7 @@ describe('PhotoDetail', () => {
     expect(item).toBeTruthy()
     item!.click()
     await flushPromises()
-    expect(api.batch).toHaveBeenCalledWith(['p2'], 'archive')
+    expect(api.batch).toHaveBeenCalledWith(['p2'], 'archive', undefined)
     expect(router.currentRoute.value.query.photo).toBeUndefined()
   })
 

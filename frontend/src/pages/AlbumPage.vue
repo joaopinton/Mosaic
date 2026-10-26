@@ -11,6 +11,7 @@ import { currentAlbum, currentSection, openCurate, sidebar } from '../lib/store'
 import { SECTION_OF } from '../lib/nav'
 import SavedWork from '../components/SavedWork.vue'
 import { errorMessage, toast } from '../lib/toast'
+import { pushUndo } from '../lib/undo'
 import type { Album } from '../lib/types'
 
 const route = useRoute()
@@ -77,7 +78,14 @@ async function regenerate(): Promise<void> {
 async function toggleFavorite(): Promise<void> {
   if (!album.value) return
   try {
-    album.value = await api.patchAlbum(album.value.uid, { favorite: !album.value.favorite })
+    const uid = album.value.uid
+    const was = album.value.favorite
+    album.value = await api.patchAlbum(uid, { favorite: !was })
+    pushUndo({
+      label: was ? 'Album tolto dai preferiti' : 'Album tra i preferiti',
+      undo: async () => void (album.value = await api.patchAlbum(uid, { favorite: was })),
+      redo: async () => void (album.value = await api.patchAlbum(uid, { favorite: !was })),
+    })
   } catch (error) {
     toast(errorMessage(error), 'error')
   }

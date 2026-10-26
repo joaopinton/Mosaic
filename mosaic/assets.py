@@ -171,6 +171,12 @@ def status() -> dict[str, bool]:
     return result
 
 
+def missing(group: str = "all") -> list[str]:
+    """Gli asset del gruppo che mancano su disco: senza rete si sa se un aggiornamento deve scaricare qualcosa."""
+    manifest = load_manifest()
+    return [key for key, ok in status().items() if not ok and group in ("all", manifest[key].get("group"))]
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="mosaic.assets")
     sub = parser.add_subparsers(dest="cmd", required=True)

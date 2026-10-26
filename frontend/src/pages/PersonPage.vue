@@ -8,6 +8,7 @@ import PageFrame from '../components/PageFrame.vue'
 import PhotoGrid from '../components/PhotoGrid.vue'
 import { api, cropUrl } from '../lib/api'
 import { errorMessage, toast } from '../lib/toast'
+import { pushUndo } from '../lib/undo'
 import type { Subject } from '../lib/types'
 
 const route = useRoute()
@@ -27,7 +28,15 @@ async function load(): Promise<void> {
 async function rename(): Promise<void> {
   if (!subject.value) return
   try {
-    await api.patchSubject(subject.value.uid, { name: newName.value })
+    const uid = subject.value.uid
+    const before = subject.value.name
+    const name = newName.value
+    await api.patchSubject(uid, { name })
+    pushUndo({
+      label: `Nome «${before}»`,
+      undo: async () => void (await api.patchSubject(uid, { name: before })),
+      redo: async () => void (await api.patchSubject(uid, { name })),
+    })
     renaming.value = false
     await load()
   } catch (error) {
@@ -37,7 +46,19 @@ async function rename(): Promise<void> {
 
 async function toggleHidden(): Promise<void> {
   if (!subject.value) return
-  await api.patchSubject(subject.value.uid, { hidden: !subject.value.hidden })
+  const uid = subject.value.uid
+  const was = subject.value.hidden
+  try {
+    await api.patchSubject(uid, { hidden: !was })
+  } catch (error) {
+    toast(errorMessage(error), 'error')
+    return
+  }
+  pushUndo({
+    label: was ? 'Persona di nuovo visibile' : 'Persona nascosta',
+    undo: async () => void (await api.patchSubject(uid, { hidden: was })),
+    redo: async () => void (await api.patchSubject(uid, { hidden: !was })),
+  })
   await load()
 }
 

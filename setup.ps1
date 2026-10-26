@@ -514,6 +514,84 @@ function Register-Uninstaller([string]$Dir) {
     Write-Host "Disinstallazione disponibile in Impostazioni > App."
 }
 
+# --- aggiornamento di un'installazione esistente -----------------------------------------------------------
+
+# Chi ha già Mosaic installato (con le foto già categorizzate) lancia lo stesso MosaicSetup.exe: si riconosce la cartella,
+# si ferma l'app, si sostituisce il codice e basta. Dati (data\, config.yaml), modelli, programmi e ambiente Python restano.
+$UninstallKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Mosaic'
+$KeepOnUpdate = @('data', 'models', 'runtime', '.venv', 'python', 'config.yaml', 'setup.log')   # mai toccati (models.yaml e labels_it.yaml sì)
+$MinUpdateGB = 0.5
+
+function Test-ExistingInstall([string]$Dir) {
+    if (-not $Dir -or -not (Test-Path -LiteralPath $Dir)) { return $false }
+    return (Test-Path (Join-Path $Dir 'mosaic\desktop.py')) -and ((Test-Path (Join-Path $Dir '.venv\Scripts\python.exe')) -or
+            (Test-Path (Join-Path $Dir 'config.yaml')) -or (Test-Path (Join-Path $Dir 'data\mosaic.db')))
+}
+
+# La cartella dove Mosaic è già installato (dal registro, o la cartella di setup stessa), oppure $null.
+function Get-ExistingInstall {
+    try {
+        $loc = (Get-ItemProperty -Path $UninstallKey -Name InstallLocation -ErrorAction SilentlyContinue).InstallLocation
+        if ($loc -and (Test-ExistingInstall $loc)) { return [IO.Path]::GetFullPath($loc) }
+    } catch {
+        Write-Log "Registro non letto: $($_.Exception.Message)"
+    }
+    $default = Join-Path ([Environment]::GetFolderPath('UserProfile')) 'Mosaic'
+    if (Test-ExistingInstall $default) { return $default }
+    return $null
+}
+
+function Get-InstalledVersion([string]$Dir) {
+    $file = Join-Path $Dir 'installed-version.txt'
+    if (Test-Path $file) { return ((Get-Content -LiteralPath $file -TotalCount 1) | Out-String).Trim() }
+    return $null
+}
+
+# Chiude Mosaic e i programmi che lancia (llama-server, exiftool, ffmpeg) se partono da questa cartella: con l'app aperta
+# i file sono bloccati e il vecchio codice resterebbe in memoria.
+function Stop-Mosaic([string]$Dir) {
+    $prefix = ([IO.Path]::GetFullPath($Dir)).TrimEnd('\') + '\'
+    $running = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object {
+        $_.ExecutablePath -and $_.ExecutablePath.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase) -and $_.ProcessId -ne $PID })
+    if (-not $running.Count) { return 0 }
+    Write-Info "Chiudo Mosaic e i suoi programmi ($($running.Count) processi)..."
+    foreach ($p in $running) {
+        try { Stop-Process -Id $p.ProcessId -Force -ErrorAction Stop } catch { Write-Log "Processo $($p.ProcessId) non chiuso: $($_.Exception.Message)" }
+    }
+    for ($i = 0; $i -lt 20; $i++) {
+        $left = @($running | Where-Object { Get-Process -Id $_.ProcessId -ErrorAction SilentlyContinue })
+        if (-not $left.Count) { break }
+        Start-Sleep -Milliseconds 500
+    }
+    return $running.Count
+}
+
+# Toglie il codice vecchio (e gli asset dell'interfaccia con l'hash nel nome) prima di estrarre il nuovo.
+function Remove-OldApp([string]$Dir) {
+    foreach ($rel in 'mosaic', 'frontend\dist') {
+        $path = Join-Path $Dir $rel
+        if (Test-Path -LiteralPath $path) { Remove-Item -LiteralPath $path -Recurse -Force -ErrorAction Stop }
+    }
+}
+
+function Get-RequirementsHash([string]$File) {
+    $text = (Get-Content -LiteralPath $File -Raw) -replace "`r`n", "`n"
+    $sha = [Security.Cryptography.SHA256]::Create()
+    return ([BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($text))) -replace '-', '').ToLower()
+}
+
+# L'ambiente Python va bene com'è se le dipendenze richieste non sono cambiate e le librerie si caricano.
+function Test-EnvironmentCurrent([string]$Venv, [string]$Requirements) {
+    $marker = Join-Path $Venv 'requirements.sha256'
+    if (-not (Test-Path $marker) -or -not (Test-Venv $Venv)) { return $false }
+    if ((Get-Content -LiteralPath $marker -TotalCount 1).Trim() -ne (Get-RequirementsHash $Requirements)) { return $false }
+    return $null -ne (Get-Output (Join-Path $Venv 'Scripts\python.exe') @('-c', $CoreImports))
+}
+
+function Save-RequirementsHash([string]$Venv, [string]$Requirements) {
+    Set-Content -LiteralPath (Join-Path $Venv 'requirements.sha256') -Value (Get-RequirementsHash $Requirements) -Encoding ASCII
+}
+
 function Show-Check {
     Write-Step 'Controllo prerequisiti (nessuna modifica)'
     $dir = if ($InstallDir) { $InstallDir } else { $Here }
@@ -533,21 +611,36 @@ if ($MyInvocation.InvocationName -eq '.') { return }  # caricato per i test: sol
 
 try {
     Write-Host ''
-    Write-Host '  Mosaic 2 - installazione completa (nessun Docker, tutto in locale)' -ForegroundColor Green
+    Write-Host '  Mosaic 2 - installazione o aggiornamento (nessun Docker, tutto in locale)' -ForegroundColor Green
     Write-Host ''
     if ($Check) { Show-Check; exit 0 }
 
     $hasPayload = Test-Path $Payload
+    $isUpdate = $false
     if (-not $InstallDir) {
-        $InstallDir = if ($hasPayload) { Select-InstallDir } else { $Here }
+        $existing = if ($hasPayload) { Get-ExistingInstall } else { $null }
+        if ($existing) {
+            $InstallDir = $existing
+            $isUpdate = $true
+        } else {
+            $InstallDir = if ($hasPayload) { Select-InstallDir } else { $Here }
+        }
+    } elseif ($hasPayload -and (Test-ExistingInstall $InstallDir)) {
+        $isUpdate = $true
     }
     $InstallDir = [IO.Path]::GetFullPath($InstallDir)
     New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
     $script:LogFile = Join-Path $InstallDir 'setup.log'
-    Write-Log "Installazione in $InstallDir"
+    Write-Log "Installazione in $InstallDir (aggiornamento: $isUpdate)"
+    $summary = New-Object System.Collections.Generic.List[string]
+    $oldVersion = if ($isUpdate) { Get-InstalledVersion $InstallDir } else { $null }
+    if ($isUpdate) {
+        if (-not $oldVersion) { $oldVersion = (Get-ItemProperty -Path $UninstallKey -Name DisplayVersion -ErrorAction SilentlyContinue).DisplayVersion }
+        Write-Host "Mosaic è già installato in $InstallDir$(if ($oldVersion) { " (versione $oldVersion)" }): aggiorno il programma e tengo foto, catalogo, modelli e impostazioni." -ForegroundColor Green
+    }
 
     Write-Step 'Controllo del PC'
-    $machine = Test-Machine $InstallDir
+    $machine = Test-Machine $InstallDir (-not $isUpdate)   # un aggiornamento senza dipendenze nuove funziona anche senza Internet
     if ($machine.Problems.Count) { throw ($machine.Problems -join ' ') }
 
     # con -SkipAssets non si scaricano modelli né programmi: bastano l'ambiente Python e le dipendenze
@@ -556,11 +649,19 @@ try {
         $script:SkipLLM = $true
         Write-Warn "Spazio libero $freeGB GB: salto il modello LLM locale (2,8 GB). Per aggiungerlo dopo, libera spazio e rilancia l'installazione."
     }
-    $needGB = if ($SkipAssets) { 1.5 } elseif ($script:SkipLLM) { 4 } else { 6 }
+    $needGB = if ($isUpdate) { $MinUpdateGB } elseif ($SkipAssets) { 1.5 } elseif ($script:SkipLLM) { 4 } else { 6 }
     Write-Host "Cartella: $InstallDir  (spazio libero: $freeGB GB, necessari circa $needGB GB)"
     if ($null -ne $freeGB -and $freeGB -lt $needGB) {
         Write-Warn 'Spazio libero insufficiente.'
         if ($Quiet -or (Read-Host 'Continuare comunque? (s/N)') -notmatch '^[sSyY]') { throw 'Spazio su disco insufficiente.' }
+    }
+
+    if ($isUpdate) {
+        Write-Step 'Chiudo Mosaic se è aperto'
+        $closed = Stop-Mosaic $InstallDir
+        if ($closed) { $summary.Add("chiuso Mosaic ($closed processi)") }
+        Write-Step 'Tolgo il codice della versione precedente'
+        Remove-OldApp $InstallDir
     }
 
     if ($hasPayload) {
@@ -568,14 +669,44 @@ try {
         Expand-Archive -LiteralPath $Payload -DestinationPath $InstallDir -Force
     }
 
-    if (-not (Test-VCRuntime)) { Install-VCRuntime }
+    if (-not $isUpdate -and -not (Test-VCRuntime)) { Install-VCRuntime }
 
     Write-Step 'Python, ambiente virtuale e dipendenze'
     $venv = Join-Path $InstallDir '.venv'
-    $venvPython = Initialize-Environment $InstallDir $venv (Join-Path $InstallDir 'requirements.txt')
+    $requirements = Join-Path $InstallDir 'requirements.txt'
+    if ($isUpdate -and (Test-EnvironmentCurrent $venv $requirements)) {
+        $venvPython = Join-Path $venv 'Scripts\python.exe'
+        Write-Host 'Dipendenze invariate: tengo l''ambiente Python com''è (nessun download).'
+        $summary.Add('ambiente Python invariato')
+    } else {
+        $venvPython = Initialize-Environment $InstallDir $venv $requirements
+        Save-RequirementsHash $venv $requirements
+        $summary.Add('dipendenze Python aggiornate')
+    }
     Write-Host "Ambiente pronto: $venvPython"
 
-    if (-not $SkipAssets) {
+    if ($isUpdate -and -not $SkipAssets) {
+        # modelli e programmi già presenti non si ricontrollano in rete: si scarica solo ciò che manca
+        $env:MOSAIC_HOME = $InstallDir
+        Push-Location $InstallDir
+        try {
+            $absent = Get-Output $venvPython @('-c', "from mosaic import assets; print(','.join(assets.missing('core')))")
+            if ($absent -and $absent.Trim()) {
+                Write-Step "Scarico i modelli mancanti: $($absent.Trim())"
+                try {
+                    Invoke-Logged $venvPython @('-m', 'mosaic.assets', 'fetch', '--group', 'core')
+                    $summary.Add("scaricati: $($absent.Trim())")
+                } catch {
+                    Write-Warn "Modelli mancanti non scaricati (serve Internet): rilancia l'aggiornamento più tardi. ($($_.Exception.Message))"
+                }
+            } else {
+                Write-Host 'Modelli e programmi già presenti: nessun download.'
+                $summary.Add('modelli e programmi invariati')
+            }
+        } finally {
+            Pop-Location
+        }
+    } elseif (-not $SkipAssets) {
         $env:MOSAIC_HOME = $InstallDir
         Push-Location $InstallDir
         try {
@@ -599,12 +730,24 @@ try {
     Write-Step 'Finestra nativa (WebView2)'
     Install-WebView2
 
+    $newVersion = Get-AppVersion $InstallDir
+    Set-Content -LiteralPath (Join-Path $InstallDir 'installed-version.txt') -Value $newVersion -Encoding ASCII
+
     Write-Step 'Collegamenti'
     Write-Launcher $InstallDir
     if ($hasPayload) { Register-Uninstaller $InstallDir }
 
     Write-Host ''
-    Write-Host "Installazione completata in $InstallDir" -ForegroundColor Green
+    if ($isUpdate) {
+        $from = if ($oldVersion) { $oldVersion } else { 'precedente' }
+        Write-Host "Aggiornamento completato in ${InstallDir}: da $from a $newVersion" -ForegroundColor Green
+        Write-Host 'Le tue foto, il catalogo, le persone e le impostazioni sono rimasti come erano.'
+        Write-Host '(Se il catalogo ha bisogno di un nuovo formato, Mosaic ne fa una copia in data\backups al primo avvio.)'
+        foreach ($line in $summary) { Write-Host "  - $line" }
+        Write-Log "Aggiornato da $from a ${newVersion}: $($summary -join '; ')"
+    } else {
+        Write-Host "Installazione completata in $InstallDir" -ForegroundColor Green
+    }
     Write-Host "Log: $script:LogFile"
     $app = Join-Path $InstallDir 'Mosaic.exe'
     if (-not $Quiet -and $hasPayload -and (Test-Path $app)) {

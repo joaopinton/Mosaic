@@ -1,10 +1,14 @@
 <script setup lang="ts">
 import { AnimatePresence, Motion } from 'motion-v'
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { installHotkeys } from '../lib/hotkeys'
 import { useMediaQuery } from '../lib/useMediaQuery'
-import { refreshJobs, refreshStatus, searchRequest, setSidebarPreference, sidebar, startEvents } from '../lib/store'
+import {
+  clearSelection, gridSource, hasSelection, refreshJobs, refreshStatus, searchRequest, selectAllInView, setSidebarPreference, sidebar, startEvents,
+} from '../lib/store'
+import { errorMessage, toast } from '../lib/toast'
+import { redo, undo } from '../lib/undo'
 import { trackPointerOrigin } from '../lib/pointerOrigin'
 import Brand from './Brand.vue'
 import CuratePanel from './CuratePanel.vue'
@@ -43,6 +47,28 @@ function expand(): void {
   if (collapsed.value) setSidebarPreference('open')
 }
 
+/** Una finestra o un menu aperto: Esc deve chiudere quelli, non la selezione. */
+function overlayOpen(): boolean {
+  return document.querySelector('dialog[open], [role="dialog"], [role="menu"], .pswp--open') !== null
+}
+
+/** Ctrl+A: tutte le foto della pagina (non nel dettaglio di una foto, dove non ha senso). */
+async function selectAllHere(): Promise<void> {
+  if (route.query.photo || overlayOpen()) return
+  try {
+    const count = await selectAllInView()
+    if (count) toast(`${count} foto selezionate`)
+  } catch (error) {
+    toast(errorMessage(error), 'error')
+  }
+}
+
+// la selezione vale per una pagina sola: cambiando pagina (non aprendo una foto) si azzera
+watch(() => route.path, () => {
+  clearSelection()
+  gridSource.value = null
+})
+
 let cleanup: (() => void)[] = []
 onMounted(() => {
   void refreshStatus()
@@ -50,7 +76,13 @@ onMounted(() => {
   cleanup = [
     startEvents(),
     trackPointerOrigin(),
-    installHotkeys({ focusSearch: () => searchRequest.value++, showHelp: () => (help.value = true), go: (path) => void router.push(path) }),
+    installHotkeys({
+      focusSearch: () => searchRequest.value++, showHelp: () => (help.value = true), go: (path) => void router.push(path),
+      selectAll: () => void selectAllHere(),
+      undo: () => void undo(),
+      redo: () => void redo(),
+      escape: () => { if (hasSelection.value && !overlayOpen()) clearSelection() },
+    }),
   ]
 })
 onBeforeUnmount(() => cleanup.forEach((fn) => fn()))

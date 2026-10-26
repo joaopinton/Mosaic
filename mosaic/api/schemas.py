@@ -21,7 +21,7 @@ class PhotoPatch(BaseModel):
 
 
 class BatchAction(BaseModel):
-    uids: Uids = Field(min_length=1, max_length=5000)
+    uids: Uids = Field(min_length=1, max_length=20000)
     action: Literal["favorite", "unfavorite", "private", "public", "archive", "restore", "add_to_album", "remove_from_album"]
     album: str | None = None
 
@@ -29,7 +29,7 @@ class BatchAction(BaseModel):
 class AlbumCreate(BaseModel):
     title: str = Field(min_length=1, max_length=200)
     description: str = Field(default="", max_length=2000)
-    uids: Uids = Field(default_factory=list, max_length=5000)
+    uids: Uids = Field(default_factory=list, max_length=20000)
     source: str | None = Field(default=None, max_length=64)  # album da cui nasce (una selezione salvata, D-27)
 
 
@@ -97,12 +97,24 @@ class CropFormat(BaseModel):
 
 
 class ExportRequest(BaseModel):
-    uids: Uids = Field(min_length=1, max_length=5000)
-    dest: str = Field(min_length=1, max_length=500)
+    uids: Uids = Field(min_length=1, max_length=20000)
+    dest: str = Field(default="", max_length=500)   # cartella; con `zip` non serve (si scarica dal browser)
+    zip: bool = False
+    zip_name: str = Field(default="Foto Mosaic", max_length=120)
     raw: bool = False
     videos: bool = True
     enhance: EnhanceOptions | None = None
     crop: CropFormat | None = None
+    fmt: Literal["original", "jpeg", "png", "webp"] = "original"
+    quality: int = Field(default=92, ge=40, le=100)
+    max_side: int | None = Field(default=None, ge=64, le=20000)
+    numbered: bool = False
+
+    @model_validator(mode="after")
+    def _needs_destination(self) -> ExportRequest:
+        if not self.zip and not self.dest.strip():
+            raise ValueError("scegli una cartella o l'opzione zip")
+        return self
 
 
 class ExportPreview(BaseModel):
@@ -181,7 +193,7 @@ class CloudKey(BaseModel):
 
 
 class RemovePhotos(BaseModel):
-    uids: Uids = Field(min_length=1, max_length=5000)
+    uids: Uids = Field(min_length=1, max_length=20000)
 
 
 class UnlinkRoot(BaseModel):

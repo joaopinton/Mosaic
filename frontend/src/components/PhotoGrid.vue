@@ -4,7 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { api, thumbUrl } from '../lib/api'
 import { formatDuration } from '../lib/format'
 import { justify } from '../lib/layout'
-import { clearSelection, hasSelection, libraryVersion, selected, toggleSelected, viewer } from '../lib/store'
+import { clearSelection, gridSource, hasSelection, libraryVersion, selected, selectRange, setSelected, toggleSelected, viewer } from '../lib/store'
 import { errorMessage } from '../lib/toast'
 import type { PhotoSummary } from '../lib/types'
 import Icon from './Icon.vue'
@@ -65,6 +65,10 @@ async function load(reset: boolean, keepCount = PAGE): Promise<void> {
     total.value = result.total
     finished.value = photos.value.length >= result.total || result.photos.length === 0
     viewer.photos = photos.value
+    if (finished.value && hasSelection.value) { // foto archiviate o tolte altrove: non restano selezionate
+      const here = new Set(photos.value.map((p) => p.uid))
+      setSelected(selected.value.filter((uid) => here.has(uid)))
+    }
     emit('loaded', result.total, result.semantic)
   } catch (error) {
     if (mine === generation) failure.value = errorMessage(error)
@@ -73,12 +77,21 @@ async function load(reset: boolean, keepCount = PAGE): Promise<void> {
   }
 }
 
+/** Dice allo store quali foto sono qui: «Seleziona tutto» (Ctrl+A) ne ha bisogno anche per quelle non ancora caricate. */
+function publishSource(): void {
+  gridSource.value = { query: props.query, items: props.items?.map((p) => p.uid) }
+}
+publishSource()
+
+/** Una selezione ricalcolata (stesse foto, ordine diverso) tiene le foto scelte che ci sono ancora; una ricerca diversa azzera. */
 function restart(): void {
   generation++
   loading.value = false
   finished.value = false
   photos.value = []
-  clearSelection()
+  if (props.items) setSelected(selected.value.filter((uid) => props.items?.some((p) => p.uid === uid)))
+  else clearSelection()
+  publishSource()
   void load(true)
 }
 
@@ -104,13 +117,20 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   generation++
+  gridSource.value = null
   resizeObserver?.disconnect()
   intersection?.disconnect()
 })
 
-function open(photo: PhotoSummary, event: MouseEvent | KeyboardEvent): void {
-  if (hasSelection.value || event.ctrlKey || event.metaKey) return toggleSelected(photo.uid)
+function openDetail(photo: PhotoSummary): void {
   void router.push({ query: { ...route.query, photo: photo.uid } })
+}
+
+/** Clic: apre la foto; con Ctrl o con una selezione già iniziata la aggiunge o toglie; con Maiusc seleziona l'intervallo. */
+function open(photo: PhotoSummary, event: MouseEvent | KeyboardEvent): void {
+  if (event.shiftKey) return selectRange(photo.uid, photos.value.map((p) => p.uid))
+  if (hasSelection.value || event.ctrlKey || event.metaKey) return toggleSelected(photo.uid)
+  openDetail(photo)
 }
 
 function label(p: PhotoSummary): string {
@@ -137,6 +157,7 @@ function label(p: PhotoSummary): string {
             :aria-pressed="selected.includes(photos[tile.index].uid)"
             :title="hints?.[photos[tile.index].uid]"
             @click="open(photos[tile.index], $event)"
+            @dblclick="hasSelection && openDetail(photos[tile.index])"
           >
             <img
               v-if="photos[tile.index].hash"
@@ -162,7 +183,7 @@ function label(p: PhotoSummary): string {
             class="pick"
             :class="{ on: selected.includes(photos[tile.index].uid), always: hasSelection }"
             :aria-label="selected.includes(photos[tile.index].uid) ? 'Deseleziona' : 'Seleziona'"
-            @click.stop="toggleSelected(photos[tile.index].uid)"
+            @click.stop="$event.shiftKey ? selectRange(photos[tile.index].uid, photos.map((p) => p.uid)) : toggleSelected(photos[tile.index].uid)"
           >
             <Icon name="check" :size="14" />
           </button>

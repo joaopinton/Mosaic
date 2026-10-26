@@ -1,7 +1,7 @@
 {
   "name": "mosaic-frontend",
   "private": true,
-  "version": "2.1.1",
+  "version": "2.2.0",
   "type": "module",
   "description": "Interfaccia di Mosaic 2 (Vue 3). Palette dai colori del logo (scripts/build-palette.mjs): vedi docs/rebuild/UI_SPEC.md",
   "scripts": {

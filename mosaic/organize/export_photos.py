@@ -32,6 +32,8 @@ from mosaic.thumbs.render import open_image
 log = logging.getLogger(__name__)
 
 JPEG_QUALITY = 92
+FORMATS = {"jpeg": ("JPEG", ".jpg"), "png": ("PNG", ".png"), "webp": ("WEBP", ".webp")}  # «original» = niente conversione
+MAX_SIDE_LIMIT = 20000
 SPACE_MARGIN = 1.05           # margine sullo spazio libero richiesto
 PREVIEW_MAX = 4
 CROP_PREVIEW_MAX = 6
@@ -53,6 +55,15 @@ class Options:
     videos: bool = True
     enhance: enhance.Options | None = None   # None: copie identiche
     crop: smart_crop.Format | None = None    # None: nessun ritaglio (D-34)
+    fmt: str = "original"                    # «original» o jpeg/png/webp: le foto si riscrivono in quel formato (D-36)
+    quality: int = JPEG_QUALITY              # 40-100, per JPEG e WebP
+    max_side: int | None = None              # lato lungo massimo in pixel (le foto più piccole non si ingrandiscono)
+    numbered: bool = False                   # nomi «0001_nome» nell'ordine scelto
+
+    @property
+    def rewrites(self) -> bool:
+        """Le foto vanno riscritte (conversione o riduzione), non copiate così come sono."""
+        return self.fmt in FORMATS or self.max_side is not None
 
 
 @dataclass
@@ -62,6 +73,8 @@ class Result:
     enhanced: int = 0
     cropped: int = 0
     skipped: int = 0
+    unimproved: int = 0
+    converted: int = 0
     errors: list[str] = field(default_factory=list)
 
 
@@ -158,7 +171,8 @@ def _items(ctx: Context, uids: list[str], opts: Options) -> tuple[list[_Item], i
         if row is None or main is None or unwanted:
             skipped += 1
             continue
-        extra = tuple(f for f in photo_files(ctx.db, row["id"]) if f["id"] != main["id"]) if opts.raw else ()
+        extra = tuple(f for f in photo_files(ctx.db, row["id"]) if f["id"] != main["id"]
+                      and (opts.raw if f["media_type"] != "video" else opts.videos))
         items.append(_Item(row["id"], main, extra))
     return items, skipped
 
@@ -248,9 +262,13 @@ def _check_space(folder: Path, need: int) -> None:
                           f"liberi {free / 1e9:.1f} GB")
 
 
-def _write_photo(ctx: Context, item: _Item, adjust: enhance.Adjust | None, fmt: smart_crop.Format | None,
-                 target: Path) -> None:
-    """La foto ritagliata e/o corretta come JPEG, con EXIF (orientamento già applicato) e profilo colore dell'originale."""
+def _out_format(opts: Options) -> tuple[str, str]:
+    """(formato Pillow, estensione) delle foto riscritte: quello scelto, altrimenti JPEG."""
+    return FORMATS.get(opts.fmt, FORMATS["jpeg"])
+
+
+def _write_photo(ctx: Context, item: _Item, adjust: enhance.Adjust | None, opts: Options, target: Path) -> None:
+    """La foto ritagliata, corretta e/o convertita, con EXIF (orientamento già applicato) e profilo colore dell'originale."""
     main = item.main
     source = ensure_source(ctx, main)
     if source is None:
@@ -259,19 +277,36 @@ def _write_photo(ctx: Context, item: _Item, adjust: enhance.Adjust | None, fmt: 
         exif = original.getexif()
         icc = original.info.get("icc_profile")
     exif[0x0112] = 1  # i pixel sono già girati
-    with open_image(source) as img:
-        out = img
-        if fmt is not None:
-            out = smart_crop.apply(img, crop_for(ctx, item.photo_id, main["sha1"], img.width, img.height, fmt), fmt)
-        if adjust is not None:
-            out = enhance.apply(out, adjust)
-        exif_ifd = exif.get_ifd(0x8769)
-        if exif_ifd:  # le dimensioni scritte nell'EXIF seguono il ritaglio
-            exif_ifd[0xA002], exif_ifd[0xA003] = out.size
-        tmp = target.with_name(target.name + ".tmp")
-        out.save(tmp, "JPEG", quality=JPEG_QUALITY, optimize=True, subsampling=0, exif=exif.tobytes(),
-                 **({"icc_profile": icc} if icc else {}))
-    os.replace(tmp, target)
+    pil_format, _ = _out_format(opts)
+    tmp = target.with_name(target.name + ".tmp")
+    try:
+        with open_image(source) as img:
+            out = img
+            if opts.crop is not None:
+                out = smart_crop.apply(img, crop_for(ctx, item.photo_id, main["sha1"], img.width, img.height, opts.crop), opts.crop)
+            if adjust is not None:
+                out = enhance.apply(out, adjust)
+            if opts.max_side is not None and max(out.size) > opts.max_side:
+                out = out.copy()
+                out.thumbnail((opts.max_side, opts.max_side), Image.Resampling.LANCZOS)
+            if out.mode not in ("RGB", "RGBA", "L") or (pil_format == "JPEG" and out.mode != "RGB" and out.mode != "L"):
+                out = out.convert("RGB")
+            exif_ifd = exif.get_ifd(0x8769)
+            if exif_ifd:  # le dimensioni scritte nell'EXIF seguono il ritaglio
+                exif_ifd[0xA002], exif_ifd[0xA003] = out.size
+            extra: dict[str, object] = {"exif": exif.tobytes()}
+            if icc:
+                extra["icc_profile"] = icc
+            if pil_format == "JPEG":
+                extra.update(quality=opts.quality, optimize=True, subsampling=0)
+            elif pil_format == "WEBP":
+                extra.update(quality=opts.quality, method=4)
+            else:
+                extra.update(optimize=True)
+            out.save(tmp, pil_format, **extra)
+        os.replace(tmp, target)
+    finally:
+        tmp.unlink(missing_ok=True)  # un errore a metà non lascia file «.tmp» nella cartella dell'utente
 
 
 def export(ctx: Context, uids: list[str], dest: Path, opts: Options,
@@ -296,44 +331,81 @@ def export(ctx: Context, uids: list[str], dest: Path, opts: Options,
             progress(0, len(items), "Misuro luce e colori…")
         adjusts = plan_items(ctx, items, opts.enhance, cancel)
     taken: set[str] = set()
+    width = max(4, len(str(len(items))))
     for done, item in enumerate(items):
         if cancel is not None and cancel.is_set():
             break
-        _export_item(ctx, item, dest, taken, adjusts.get(item.photo_id), opts.crop, result)
+        prefix = f"{done + 1:0{width}d}_" if opts.numbered else ""
+        _export_item(ctx, item, dest, taken, adjusts.get(item.photo_id), opts, result, prefix)
         if progress:
             progress(done + 1, len(items), f"{done + 1} di {len(items)} foto")
     return result
 
 
 def _export_item(ctx: Context, item: _Item, dest: Path, taken: set[str], adjust: enhance.Adjust | None,
-                 fmt: smart_crop.Format | None, result: Result) -> None:
+                 opts: Options, result: Result, prefix: str = "") -> None:
     main = item.main
     name = main["name"]
+    wants_look = opts.enhance is not None and opts.enhance.active and _can_enhance(main)
+    ext = _out_format(opts)[1]
     try:
-        if fmt is not None:  # niente ripiego sulla copia identica: si vogliono solo foto nel formato scelto
+        if opts.crop is not None:  # niente ripiego sulla copia identica: si vogliono solo foto nel formato scelto
             try:
-                _write_photo(ctx, item, adjust, fmt, _free_name(dest, f"{Path(name).stem}.jpg", taken))
+                _write_photo(ctx, item, adjust, opts, _free_name(dest, f"{prefix}{Path(name).stem}{ext}", taken))
             except (OSError, ValueError) as exc:
                 log.warning("ritaglio non riuscito per %s: %s", name, exc)
                 result.errors.append(f"{name}: non ritagliata ({exc})")
                 return
             result.cropped += 1
             result.enhanced += adjust is not None
-        elif adjust is not None:
+        elif (adjust is not None or opts.rewrites) and _can_enhance(main):
             try:
-                _write_photo(ctx, item, adjust, None, _free_name(dest, f"{Path(name).stem}.jpg", taken))
-                result.enhanced += 1
+                _write_photo(ctx, item, adjust, opts, _free_name(dest, f"{prefix}{Path(name).stem}{ext}", taken))
+                result.enhanced += adjust is not None
+                result.converted += opts.rewrites
+                result.unimproved += wants_look and adjust is None  # misure non disponibili: nessuna correzione applicata
             except (OSError, ValueError) as exc:  # si ripiega sulla copia identica
-                log.warning("miglioramento non riuscito per %s: %s", name, exc)
-                result.errors.append(f"{name}: non migliorata ({exc}), copiata com'era")
-                shutil.copy2(abs_path(main), _free_name(dest, name, taken))
+                log.warning("esportazione non riuscita per %s: %s", name, exc)
+                result.errors.append(f"{name}: non convertita ({exc}), copiata com'era")
+                shutil.copy2(abs_path(main), _free_name(dest, prefix + name, taken))
         else:
-            shutil.copy2(abs_path(main), _free_name(dest, name, taken))
+            result.unimproved += wants_look  # niente correzione calcolata: copiata com'era
+            shutil.copy2(abs_path(main), _free_name(dest, prefix + name, taken))
         for extra in item.extra:
-            shutil.copy2(abs_path(extra), _free_name(dest, extra["name"], taken))
+            shutil.copy2(abs_path(extra), _free_name(dest, prefix + extra["name"], taken))
         result.copied += 1
     except OSError as exc:
         result.errors.append(f"{name}: {exc}")
+
+
+def make_zip(folder: Path, target: Path) -> Path:
+    """Impacchetta i file di `folder` in `target` (zip senza compressione per le foto già compresse)."""
+    import zipfile
+
+    tmp = target.with_name(target.name + ".tmp")
+    try:
+        with zipfile.ZipFile(tmp, "w", zipfile.ZIP_STORED, allowZip64=True) as zf:
+            for path in sorted(folder.rglob("*")):
+                if path.is_file():
+                    zf.write(path, path.relative_to(folder).as_posix())
+        os.replace(tmp, target)
+    finally:
+        tmp.unlink(missing_ok=True)
+    return target
+
+
+def zip_dir(ctx: Context) -> Path:
+    """Dove stanno gli zip pronti da scaricare (cache, si ripuliscono da soli)."""
+    path = ctx.data_dir / "cache" / "exports"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def prune_zips(ctx: Context, keep: int = 3) -> None:
+    """Tiene solo gli ultimi `keep` zip: sono copie temporanee e pesano come le foto."""
+    files = sorted(zip_dir(ctx).glob("*.zip"), key=lambda p: p.stat().st_mtime, reverse=True)
+    for old in files[keep:]:
+        old.unlink(missing_ok=True)
 
 
 # --- anteprima ----------------------------------------------------------------------------------------

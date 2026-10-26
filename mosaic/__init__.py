@@ -2,6 +2,8 @@
 
 import os
 
+__version__ = "2.2.0"  # uguale a `version` in pyproject.toml (lo verifica tests/test_version.py)
+
 # Con 8 GB di RAM le librerie numeriche non devono aprire un thread (e un buffer) per ogni core: metà dei core bastano.
 # Va fatto prima che numpy venga importato, quindi qui, nel primo modulo del pacchetto.
 _THREADS = str(max(1, (os.cpu_count() or 2) // 2))

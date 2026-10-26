@@ -32,7 +32,7 @@ afterEach(() => {
 })
 
 function open(crop = true) {
-  const w = mount(ExportDialog, { props: { open: true, uids: ['p1', 'p2'], title: 'Festa', crop }, attachTo: document.body })
+  const w = mount(ExportDialog, { props: { open: true, uids: ['p1', 'p2'], title: 'Festa', crop, mode: 'folder' }, attachTo: document.body })
   mounted.push(w)
   return w
 }
@@ -61,6 +61,7 @@ describe('ExportDialog con il ritaglio', () => {
     await flushPromises()
     expect(api.exportPhotos).toHaveBeenCalledWith({
       uids: ['p1', 'p2'], dest: 'C:\\Users\\me\\Desktop\\Festa', raw: false, videos: false, enhance: null, crop: { w: 9, h: 16, pixels: false },
+      zip: false, zip_name: 'Festa', fmt: 'original', quality: 92, max_side: null, numbered: false,
     })
   })
 

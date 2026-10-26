@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
-import { api, ApiError } from '../lib/api'
+import { api, ApiError, exportDownloadUrl } from '../lib/api'
 import { jobs, refreshJobs } from '../lib/store'
 import { errorMessage, toast } from '../lib/toast'
 import type { CropFormat, EnhanceOptions, ExportPreviewShot } from '../lib/types'
@@ -10,14 +10,34 @@ import Icon from './Icon.vue'
 import ProgressBar from './ProgressBar.vue'
 import Segmented from './Segmented.vue'
 
-// Esporta in una cartella (D-30): copie degli originali o, con «Migliora luce e colori» e «Ritaglia a formato» (D-34),
-// JPEG corretti e ritagliati. Il ritaglio si accende all'apertura solo se lo chiede `crop`.
-const props = defineProps<{ open: boolean; uids: string[]; title: string; crop?: boolean }>()
+// Un solo dialogo per scaricare ed esportare le foto, da qualunque pagina (D-30, D-34, D-36): destinazione (zip da scaricare o
+// cartella), formato, qualità, dimensione, nomi, «Migliora luce e colori» e «Ritaglia a formato». Le scelte si ricordano.
+// Il ritaglio si accende all'apertura solo se lo chiede `crop`; `mode` forza la destinazione.
+const props = defineProps<{ open: boolean; uids: string[]; title: string; crop?: boolean; mode?: 'zip' | 'folder' }>()
 const emit = defineEmits<{ close: [] }>()
 
+type Format = 'original' | 'jpeg' | 'png' | 'webp'
+interface Prefs { mode: 'zip' | 'folder'; fmt: Format; quality: number; maxSide: number; numbered: boolean; raw: boolean; videos: boolean }
+const PREFS_KEY = 'mosaic.export.prefs'
+const DEFAULTS: Prefs = { mode: 'zip', fmt: 'original', quality: 92, maxSide: 0, numbered: false, raw: false, videos: true }
+
+function loadPrefs(): Prefs {
+  try {
+    return { ...DEFAULTS, ...JSON.parse(localStorage.getItem(PREFS_KEY) ?? '{}') }
+  } catch {
+    return { ...DEFAULTS }
+  }
+}
+
+const initial = loadPrefs()
+const destMode = ref<'zip' | 'folder'>(initial.mode)
+const fmt = ref<Format>(initial.fmt)
+const quality = ref(initial.quality)
+const maxSide = ref(initial.maxSide) // 0 = misura originale
+const numbered = ref(initial.numbered)
 const dest = ref('')
-const raw = ref(false)
-const videos = ref(true)
+const raw = ref(initial.raw)
+const videos = ref(initial.videos)
 const improve = ref(false)
 const cropOn = ref(false)
 const cropFormat = ref<CropFormat | null>(null)
@@ -25,30 +45,57 @@ const look = reactive<EnhanceOptions>({ light: true, contrast: true, vivid: true
 const canPick = ref(true)
 const shots = ref<ExportPreviewShot[]>([])
 const previewing = ref(false)
-const created = ref<{ job: number; folder: string } | null>(null)
+const created = ref<{ job: number; folder: string; zip: boolean } | null>(null)
 const starting = ref(false)
 const STRENGTHS = [{ value: 'light', label: 'Leggera' }, { value: 'medium', label: 'Media' }, { value: 'strong', label: 'Forte' }] as const
+const FORMATS = [{ value: 'original', label: 'Originale' }, { value: 'jpeg', label: 'JPEG' }, { value: 'png', label: 'PNG' }, { value: 'webp', label: 'WebP' }] as const
+const SIDES = [{ value: 0, label: 'Originale' }, { value: 3840, label: '4K (3840)' }, { value: 2560, label: '2560' }, { value: 1920, label: 'Full HD (1920)' }, { value: 1280, label: '1280' }]
+const MODES = [{ value: 'zip', label: 'Scarica (zip)' }, { value: 'folder', label: 'In una cartella' }] as const
 
 const job = computed(() => (created.value ? jobs.value.find((j) => j.id === created.value?.job) ?? null : null))
-const phase = computed<'edit' | 'working' | 'done' | 'failed'>(() => {
+const phase = computed<'edit' | 'working' | 'done' | 'failed' | 'cancelled'>(() => {
   if (!created.value) return 'edit'
   if (job.value?.state === 'done') return 'done'
-  if (job.value?.state === 'failed' || job.value?.state === 'cancelled') return 'failed'
+  if (job.value?.state === 'failed') return 'failed'
+  if (job.value?.state === 'cancelled') return 'cancelled'
   return 'working'
 })
 const fraction = computed(() => (job.value && job.value.total ? job.value.done / job.value.total : null))
 const count = computed(() => props.uids.length)
+const isZip = computed(() => destMode.value === 'zip')
+const rewrites = computed(() => fmt.value !== 'original' || maxSide.value > 0)
+const showQuality = computed(() => fmt.value === 'jpeg' || fmt.value === 'webp' || (fmt.value === 'original' && (improve.value || cropOn.value || maxSide.value > 0)))
 const workingLabel = computed(() => {
   if (cropOn.value) return improve.value ? 'Ritaglio, miglioro e salvo le foto…' : 'Ritaglio e salvo le foto…'
-  return improve.value ? 'Miglioro e copio le foto…' : 'Copio le foto…'
+  if (improve.value) return 'Miglioro e salvo le foto…'
+  return rewrites.value ? 'Converto le foto…' : isZip.value ? 'Preparo lo zip…' : 'Copio le foto…'
 })
-const canStart = computed(() => !!dest.value.trim() && !starting.value && count.value > 0 && (!cropOn.value || !!cropFormat.value))
+const canStart = computed(() => (isZip.value || !!dest.value.trim()) && !starting.value && count.value > 0 && (!cropOn.value || !!cropFormat.value))
+const zipName = computed(() => props.title.replace(/[<>:"/\\|?*]+/g, ' ').replace(/\s{2,}/g, ' ').trim() || 'Foto Mosaic')
+
+function savePrefs(): void {
+  const prefs: Prefs = { mode: destMode.value, fmt: fmt.value, quality: quality.value, maxSide: maxSide.value, numbered: numbered.value, raw: raw.value, videos: videos.value }
+  try {
+    localStorage.setItem(PREFS_KEY, JSON.stringify(prefs))
+  } catch {
+    // senza archivio del browser le scelte valgono solo per questa volta
+  }
+}
 
 watch(() => props.open, async (open) => {
   if (!open) return
   created.value = null
   shots.value = []
   cropOn.value = props.crop === true
+  improve.value = false
+  const saved = loadPrefs()
+  destMode.value = props.mode ?? saved.mode
+  fmt.value = saved.fmt
+  quality.value = saved.quality
+  maxSide.value = saved.maxSide
+  numbered.value = saved.numbered
+  raw.value = saved.raw
+  videos.value = saved.videos
   try {
     dest.value = (await api.exportDefaultDir(props.title)).folder
   } catch {
@@ -97,10 +144,14 @@ async function start(): Promise<void> {
   starting.value = true
   const crop = cropOn.value ? cropFormat.value : null
   try {
-    created.value = await api.exportPhotos({
-      uids: props.uids, dest: dest.value.trim(), raw: raw.value && !crop, videos: videos.value && !crop,
+    savePrefs()
+    const zip = isZip.value
+    const made = await api.exportPhotos({
+      uids: props.uids, dest: zip ? '' : dest.value.trim(), raw: raw.value && !crop, videos: videos.value && !crop,
       enhance: improve.value ? { ...look } : null, crop,
+      zip, zip_name: zipName.value, fmt: fmt.value, quality: quality.value, max_side: maxSide.value || null, numbered: numbered.value,
     })
+    created.value = { ...made, zip }
     void refreshJobs()
   } catch (error) {
     toast(errorMessage(error), 'error')
@@ -118,19 +169,50 @@ async function reveal(id = created.value?.job): Promise<void> {
   }
 }
 
-// chiuso il dialogo mentre lavora: l'avviso arriva lo stesso, con la cartella a un clic
+/** Avvia il download dello zip pronto: un vero download (del browser o dell'app desktop). */
+function download(id = created.value?.job): void {
+  if (id === undefined) return
+  const link = document.createElement('a')
+  link.href = exportDownloadUrl(id)
+  link.download = ''
+  document.body.append(link)
+  link.click()
+  link.remove()
+}
+
+async function stop(): Promise<void> {
+  if (!created.value) return
+  try {
+    await api.cancelJob(created.value.job)
+  } catch (error) {
+    toast(errorMessage(error), 'error')
+  }
+}
+
+// lo zip pronto parte da solo; a dialogo chiuso l'avviso arriva lo stesso, con la cartella o il download a un clic
 watch(phase, (now) => {
-  if (props.open || !created.value) return
-  const id = created.value.job
-  if (now === 'done') toast(job.value?.message || 'Esportazione finita', 'default', { label: 'Apri la cartella', run: () => void reveal(id) }, 10000)
+  if (!created.value) return
+  const { job: id, zip } = created.value
+  if (now === 'done' && zip) download(id)
+  if (props.open) return
+  if (now === 'done') {
+    toast(job.value?.message || 'Esportazione finita', 'default',
+          zip ? { label: 'Scarica di nuovo', run: () => download(id) } : { label: 'Apri la cartella', run: () => void reveal(id) }, 10000)
+  }
   if (now === 'failed') toast(`Esportazione non riuscita: ${job.value?.error || 'errore sconosciuto'}`, 'error')
+  if (now === 'cancelled') toast('Esportazione annullata')
 })
 </script>
 
 <template>
-  <Dialog :open="open" title="Esporta in una cartella" size="lg" @close="emit('close')">
+  <Dialog :open="open" title="Scarica o esporta le foto" size="lg" @close="emit('close')">
     <div v-if="phase === 'edit'" class="export">
       <div class="field">
+        <span class="label">Dove</span>
+        <Segmented v-model="destMode" :options="[...MODES]" label="Dove salvare le foto" />
+      </div>
+
+      <div v-if="!isZip" class="field">
         <label for="ex-dest">Cartella</label>
         <div class="dest">
           <input id="ex-dest" v-model="dest" class="input mono" autocomplete="off" spellcheck="false" data-test="export-dest" />
@@ -138,6 +220,27 @@ watch(phase, (now) => {
         </div>
         <p class="hint">{{ count }} foto. Se la cartella non c'è la creo; i file con lo stesso nome non vengono mai sovrascritti.</p>
       </div>
+      <p v-else class="hint" data-test="export-zip-hint">{{ count }} foto in un unico file «{{ zipName }}.zip», che parte da solo quando è pronto.</p>
+
+      <fieldset class="checks format">
+        <legend class="caps">Formato e dimensione</legend>
+        <div class="field">
+          <span class="label">Formato</span>
+          <Segmented v-model="fmt" :options="[...FORMATS]" label="Formato delle foto" />
+        </div>
+        <div class="field">
+          <label for="ex-side">Lato lungo</label>
+          <select id="ex-side" v-model.number="maxSide" class="input" data-test="export-side">
+            <option v-for="o in SIDES" :key="o.value" :value="o.value">{{ o.label }}</option>
+          </select>
+        </div>
+        <div v-if="showQuality" class="field">
+          <label for="ex-quality">Qualità {{ quality }}</label>
+          <input id="ex-quality" v-model.number="quality" type="range" min="40" max="100" step="1" data-test="export-quality" />
+        </div>
+        <label><input v-model="numbered" type="checkbox" data-test="export-numbered" /> Numera i file (0001_nome…)</label>
+        <p v-if="fmt === 'original' && (improve || cropOn) && !maxSide" class="hint wide">Con miglioramento o ritaglio le foto escono in JPEG.</p>
+      </fieldset>
 
       <fieldset class="checks">
         <legend class="caps">Cosa copiare</legend>
@@ -158,7 +261,7 @@ watch(phase, (now) => {
         <label class="switch-row">
           <input v-model="improve" type="checkbox" data-test="export-improve" />
           <span><strong><Icon name="sparkle" :size="15" /> Migliora luce e colori</strong>
-            <span class="hint">Le copie diventano JPEG corretti; gli originali nella libreria restano come sono.</span></span>
+            <span class="hint">Le copie diventano corrette; gli originali nella libreria restano come sono.</span></span>
         </label>
         <template v-if="improve">
           <fieldset class="checks">
@@ -189,16 +292,24 @@ watch(phase, (now) => {
       <ProgressBar size="md" :value="fraction" label="Esportazione: avanzamento" />
       <span class="hint">{{ job?.message || 'in coda' }}</span>
       <span class="hint">Puoi chiudere: ti avviso quando ho finito.</span>
+      <button type="button" class="btn sm" data-test="export-stop" @click="stop">Annulla</button>
     </div>
 
     <div v-else-if="phase === 'done' && created" class="status done">
       <span class="ok"><Icon name="check" :size="22" /></span>
-      <strong>Esportazione finita</strong>
+      <strong>{{ created.zip ? 'Zip pronto' : 'Esportazione finita' }}</strong>
       <span class="hint">{{ job?.message }}</span>
       <div class="actions">
-        <button type="button" class="btn primary" data-test="export-reveal" @click="reveal()"><Icon name="folderOpen" /> Apri la cartella</button>
+        <button v-if="created.zip" type="button" class="btn primary" data-test="export-download" @click="download()"><Icon name="download" /> Scarica di nuovo</button>
+        <button v-else type="button" class="btn primary" data-test="export-reveal" @click="reveal()"><Icon name="folderOpen" /> Apri la cartella</button>
         <button type="button" class="btn" @click="emit('close')">Chiudi</button>
       </div>
+    </div>
+
+    <div v-else-if="phase === 'cancelled'" class="status" role="status">
+      <strong>Esportazione annullata</strong>
+      <span class="hint">Le foto già copiate in una cartella restano dove sono; uno zip interrotto non viene creato.</span>
+      <button type="button" class="btn" @click="created = null">Ricomincia</button>
     </div>
 
     <div v-else class="status" role="alert">
@@ -210,7 +321,7 @@ watch(phase, (now) => {
     <template v-if="phase === 'edit'" #footer>
       <button type="button" class="btn" @click="emit('close')">Annulla</button>
       <button type="button" class="btn primary" data-test="export-start" :disabled="!canStart" @click="start">
-        <Icon name="download" /> Esporta {{ count }} foto
+        <Icon name="download" /> {{ isZip ? 'Scarica' : 'Esporta' }} {{ count }} foto
       </button>
     </template>
   </Dialog>
@@ -223,6 +334,9 @@ watch(phase, (now) => {
 .checks { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-2); margin: 0; padding: 0; border: 0; font-size: var(--text-sm); }
 .checks legend { grid-column: 1 / -1; padding: 0 0 var(--space-1); }
 .checks label { display: flex; align-items: center; gap: var(--space-2); }
+.checks.format { align-items: end; }
+.checks .field { display: flex; flex-direction: column; gap: var(--space-1); }
+.checks .wide { grid-column: 1 / -1; margin: 0; }
 .improve { display: flex; flex-direction: column; gap: var(--space-3); padding: var(--space-3) var(--space-4); border: 1px solid var(--border-default);
   border-radius: var(--radius-panel); transition: background-color var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out); }
 .improve.on { border-color: transparent; background: var(--bg-selected); }

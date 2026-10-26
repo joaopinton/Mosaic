@@ -1,9 +1,14 @@
-// Scorciatoie globali: `/` cerca, `?` elenco, sequenze `g` + lettera (timeout 1 s). Non scattano mentre si digita.
+// Scorciatoie globali: `/` cerca, `?` elenco, sequenze `g` + lettera (timeout 1 s), Ctrl+A seleziona tutto, Ctrl+Z / Ctrl+Y
+// annulla e ripeti, Esc deseleziona. Non scattano mentre si digita (lì valgono quelle del campo di testo).
 
 export interface HotkeyHandlers {
   focusSearch: () => void
   showHelp: () => void
   go: (path: string) => void
+  selectAll?: () => void
+  undo?: () => void
+  redo?: () => void
+  escape?: () => void
 }
 
 export const GO_KEYS: Record<string, { path: string; label: string }> = {
@@ -28,6 +33,14 @@ export function isTyping(target: EventTarget | null): boolean {
   return el.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName)
 }
 
+function onChord(e: KeyboardEvent, handlers: HotkeyHandlers): void {
+  const key = e.key.toLowerCase()
+  const action = key === 'a' ? handlers.selectAll : key === 'z' ? (e.shiftKey ? handlers.redo : handlers.undo) : key === 'y' ? handlers.redo : undefined
+  if (!action) return
+  e.preventDefault()
+  action()
+}
+
 export function installHotkeys(handlers: HotkeyHandlers): () => void {
   let pending = false
   let timer: ReturnType<typeof setTimeout> | undefined
@@ -36,7 +49,10 @@ export function installHotkeys(handlers: HotkeyHandlers): () => void {
     if (timer) clearTimeout(timer)
   }
   const onKey = (e: KeyboardEvent) => {
-    if (e.ctrlKey || e.altKey || e.metaKey || isTyping(e.target)) return
+    if (isTyping(e.target)) return
+    if ((e.ctrlKey || e.metaKey) && !e.altKey) return onChord(e, handlers)
+    if (e.altKey || e.ctrlKey || e.metaKey) return
+    if (e.key === 'Escape') return handlers.escape?.()
     if (pending) {
       const target = GO_KEYS[e.key.toLowerCase()]
       reset()

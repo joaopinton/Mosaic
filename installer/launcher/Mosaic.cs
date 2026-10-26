@@ -8,8 +8,8 @@ using System.Windows.Forms;
 [assembly: System.Reflection.AssemblyTitle("Mosaic")]
 [assembly: System.Reflection.AssemblyProduct("Mosaic")]
 [assembly: System.Reflection.AssemblyDescription("Gestore di foto e video locale")]
-[assembly: System.Reflection.AssemblyVersion("2.0.0.0")]
-[assembly: System.Reflection.AssemblyFileVersion("2.0.0.0")]
+[assembly: System.Reflection.AssemblyVersion("2.2.0.0")]
+[assembly: System.Reflection.AssemblyFileVersion("2.2.0.0")]
 
 static class Launcher
 {

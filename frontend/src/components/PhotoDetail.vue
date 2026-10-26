@@ -5,11 +5,14 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { api, cropUrl, liveUrl, originalUrl, thumbUrl, videoUrl } from '../lib/api'
 import { formatBytes, formatDate, formatDuration } from '../lib/format'
+import { runBatchSafe } from '../lib/batch'
 import { libraryVersion, status, viewer } from '../lib/store'
 import { errorMessage, toast } from '../lib/toast'
+import { pushUndo } from '../lib/undo'
 import type { Album, PhotoDetail, RemoveResult, SimilarHit } from '../lib/types'
 import Dialog from './Dialog.vue'
 import Dropdown from './Dropdown.vue'
+import ExportDialog from './ExportDialog.vue'
 import Icon from './Icon.vue'
 import RemovePhotosDialog from './RemovePhotosDialog.vue'
 
@@ -106,13 +109,42 @@ function onKey(event: KeyboardEvent): void {
   else if (event.key.toLowerCase() === 'f' && photo.value) void save({ favorite: !photo.value.favorite })
 }
 
+/** Il contrario di una modifica, calcolato sulla foto com'era prima: serve a Ctrl+Z. Un testo automatico si ripristina svuotandolo. */
+function inverseOf(before: PhotoDetail, changes: Record<string, unknown>): Record<string, unknown> {
+  const back: Record<string, unknown> = {}
+  if ('favorite' in changes) back.favorite = before.favorite
+  if ('private' in changes) back.private = before.private
+  if ('title' in changes) back.title = before.title_source === 'manuale' ? before.title : ''
+  if ('caption' in changes) back.caption = before.caption_source === 'manuale' ? before.caption : ''
+  const added = (changes.keywords_add as string[] | undefined)?.filter((k) => !before.keywords.includes(k.trim().toLowerCase()))
+  if (added?.length) back.keywords_remove = added
+  const dropped = (changes.keywords_remove as string[] | undefined)?.filter((k) => before.keywords.includes(k))
+  if (dropped?.length) back.keywords_add = dropped
+  const labelsAdded = (changes.labels_add as string[] | undefined)?.filter((n) => !before.labels.some((l) => l.name.toLowerCase() === n.trim().toLowerCase()))
+  if (labelsAdded?.length) back.labels_remove = labelsAdded.map((n) => n.trim().toLowerCase().replace(/\s+/g, '-'))
+  const labelsDropped = before.labels.filter((l) => (changes.labels_remove as string[] | undefined)?.includes(l.slug)).map((l) => l.name)
+  if (labelsDropped.length) back.labels_add = labelsDropped
+  return back
+}
+
 async function save(changes: Record<string, unknown>): Promise<void> {
   if (!photo.value) return
+  const before = photo.value
+  const uid = before.uid
   try {
-    photo.value = await api.patchPhoto(photo.value.uid, changes)
+    photo.value = await api.patchPhoto(uid, changes)
     title.value = photo.value.title
     caption.value = photo.value.caption
     libraryVersion.value++
+    const back = inverseOf(before, changes)
+    if (Object.keys(back).length) {
+      pushUndo({
+        label: 'Modifica della foto',
+        undo: async () => void (await api.patchPhoto(uid, back)),
+        redo: async () => void (await api.patchPhoto(uid, changes)),
+      })
+      if (photo.value?.uid === uid) await load(uid)
+    }
   } catch (error) {
     toast(errorMessage(error), 'error')
   }
@@ -132,23 +164,12 @@ function addLabel(): void {
 
 async function toAlbum(album: Album): Promise<void> {
   if (!photo.value) return
-  try {
-    await api.batch([photo.value.uid], 'add_to_album', album.uid)
-    toast(`Aggiunta a «${album.title}»`)
-    await load(photo.value.uid)
-  } catch (error) {
-    toast(errorMessage(error), 'error')
-  }
+  if (await runBatchSafe([photo.value.uid], 'add_to_album', `Aggiunta a «${album.title}»`, album.uid)) await load(photo.value.uid)
 }
 
 async function fromAlbum(uid: string): Promise<void> {
   if (!photo.value) return
-  try {
-    await api.batch([photo.value.uid], 'remove_from_album', uid)
-    await load(photo.value.uid)
-  } catch (error) {
-    toast(errorMessage(error), 'error')
-  }
+  if (await runBatchSafe([photo.value.uid], 'remove_from_album', 'Tolta dall\'album', uid)) await load(photo.value.uid)
 }
 
 async function nameFace(marker: string, event: Event): Promise<void> {
@@ -234,14 +255,11 @@ function afterRemove(result: RemoveResult): void {
 
 async function toggleArchive(): Promise<void> {
   if (!photo.value) return
-  try {
-    await api.batch([photo.value.uid], photo.value.archived ? 'restore' : 'archive')
-    libraryVersion.value++
-    close()
-  } catch (error) {
-    toast(errorMessage(error), 'error')
-  }
+  const restoring = photo.value.archived
+  if (await runBatchSafe([photo.value.uid], restoring ? 'restore' : 'archive', restoring ? 'Ripristinata dall\'archivio' : 'Archiviata')) close()
 }
+
+const exporting = ref(false)
 </script>
 
 <template>
@@ -257,7 +275,8 @@ async function toggleArchive(): Promise<void> {
           <button type="button" class="btn ghost icon" :class="{ active: photo.private }" :aria-pressed="photo.private" aria-label="Privata" @click="save({ private: !photo.private })"><Icon name="lock" /></button>
           <Dropdown label="Altre azioni">
             <a class="menu-item" role="menuitem" :href="originalUrl(photo.uid)" target="_blank" rel="noopener"><Icon name="external" /> Apri l'originale</a>
-            <a class="menu-item" role="menuitem" :href="originalUrl(photo.uid)" :download="photo.files[0]?.name"><Icon name="download" /> Scarica</a>
+            <a class="menu-item" role="menuitem" :href="originalUrl(photo.uid)" :download="photo.files[0]?.name" data-test="detail-download"><Icon name="download" /> Scarica l'originale</a>
+            <button type="button" class="menu-item" role="menuitem" data-test="detail-export" @click="exporting = true"><Icon name="sliders" /> Scarica o esporta con opzioni…</button>
             <button v-if="llmReady" type="button" class="menu-item" role="menuitem" @click="captionWithLlm"><Icon name="wand" /> Descrivi con l'AI</button>
             <div class="menu-sep" />
             <button type="button" class="menu-item" :class="{ danger: !photo.archived }" role="menuitem"
@@ -406,6 +425,7 @@ async function toggleArchive(): Promise<void> {
         </template>
       </div>
     </div>
+    <ExportDialog :open="exporting" :uids="photo ? [photo.uid] : []" :title="photo?.title || 'Foto'" @close="exporting = false" />
     <RemovePhotosDialog :open="removing" :uids="props.uid ? [props.uid] : []" @close="removing = false" @done="afterRemove" />
   </Dialog>
 </template>

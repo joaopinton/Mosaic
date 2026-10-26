@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import shutil
 import tempfile
 from collections.abc import AsyncIterator
 from pathlib import Path
@@ -11,7 +12,9 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse, StreamingResponse
+from starlette.background import BackgroundTask
 
+from mosaic import __version__
 from mosaic import config as config_mod
 from mosaic.api.deps import get_mosaic
 from mosaic.api.schemas import (
@@ -44,6 +47,7 @@ def status(m: Mosaic = Depends(get_mosaic)) -> dict[str, Any]:
     db = m.ctx.db
     assets = assets_status()
     return {
+        "version": __version__,
         "first_run": not m.cfg.library_roots,
         "library_roots": list(m.cfg.library_roots),
         "photos": db.scalar("SELECT COUNT(*) FROM photos WHERE deleted_at IS NULL"),
@@ -297,7 +301,8 @@ def export(format: str = "json", private: bool = False, m: Mosaic = Depends(get_
         raise HTTPException(400, "formato non supportato")
     tmp = Path(tempfile.mkdtemp(prefix="mosaic-export-")) / f"catalogo.{format}"
     export_catalog(m.ctx, format, tmp, private)
-    return FileResponse(tmp, filename=tmp.name, media_type="text/csv" if format == "csv" else "application/json")
+    return FileResponse(tmp, filename=tmp.name, media_type="text/csv" if format == "csv" else "application/json",
+                        background=BackgroundTask(shutil.rmtree, tmp.parent, ignore_errors=True))
 
 
 @router.get("/assets")

@@ -111,7 +111,10 @@ export interface PosterFile { name: string; size: number; created: string }
 export interface EnhanceOptions { light: boolean; contrast: boolean; vivid: boolean; harmonize: boolean; strength: 'light' | 'medium' | 'strong' }
 /** Formato di «Ritaglia a formato» (D-34): rapporto w:h o, con `pixels`, misura esatta delle copie. */
 export interface CropFormat { w: number; h: number; pixels: boolean }
-export interface ExportRequest { uids: string[]; dest: string; raw: boolean; videos: boolean; enhance: EnhanceOptions | null; crop: CropFormat | null }
+export interface ExportRequest {
+  uids: string[]; dest: string; raw: boolean; videos: boolean; enhance: EnhanceOptions | null; crop: CropFormat | null
+  zip: boolean; zip_name: string; fmt: 'original' | 'jpeg' | 'png' | 'webp'; quality: number; max_side: number | null; numbered: boolean
+}
 export interface ExportPreviewShot { uid: string; before: string; after: string }
 export interface CropPreviewShot { uid: string; image: string; box: [number, number, number, number] }
 

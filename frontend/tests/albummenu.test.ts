@@ -173,7 +173,7 @@ describe('CollectionsPage: menu «⋯» delle schede', () => {
     const w = await mountList('folder')
     await choose(w, 'Roma', 'am-export')
     expect(allUids).toHaveBeenCalledWith('album:f1')
-    expect(w.get('[data-test="export-start"]').text()).toContain('Esporta 3 foto')
+    expect(w.get('[data-test="export-start"]').text()).toContain('3 foto')
   })
 
   it('con molte raccolte compare la ricerca, anche per percorso', async () => {

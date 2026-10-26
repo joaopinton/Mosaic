@@ -10,7 +10,7 @@ import PosterDialog from '../components/PosterDialog.vue'
 import { api, ApiError } from '../lib/api'
 import { formatSpan, fromRouteQuery, MODES, newSeed, shapeLabel, toRouteQuery } from '../lib/curate'
 import { formatCount } from '../lib/format'
-import { currentSection, libraryVersion, openCurate, selected } from '../lib/store'
+import { currentSection, libraryVersion, openCurate, setSelected } from '../lib/store'
 import { SECTION_OF } from '../lib/nav'
 import { errorMessage, toast } from '../lib/toast'
 import type { CurateResult } from '../lib/types'
@@ -82,7 +82,7 @@ function regenerate(): void {
 }
 
 function selectAll(): void {
-  selected.value = photos.value.map((p) => p.uid)
+  setSelected(photos.value.map((p) => p.uid))
 }
 
 function askSave(): void {
@@ -115,7 +115,7 @@ async function save(): Promise<void> {
       <button type="button" class="btn" :disabled="loading || !photos.length" @click="regenerate"><Icon name="shuffle" /> Rigenera</button>
       <button type="button" class="btn" :disabled="!photos.length" @click="selectAll"><Icon name="check" /> Seleziona tutte</button>
       <button type="button" class="btn" :disabled="!photos.length" data-test="poster-open" @click="posterOpen = true"><Icon name="grid" /> Crea poster</button>
-      <button type="button" class="btn" :disabled="!photos.length" data-test="selection-export" @click="exportOpen = true"><Icon name="download" /> Esporta</button>
+      <button type="button" class="btn" :disabled="!photos.length" data-test="selection-export" @click="exportOpen = true"><Icon name="download" /> Scarica / Esporta</button>
       <button type="button" class="btn primary" :disabled="!photos.length" data-test="save-selection" @click="askSave"><Icon name="album" /> Salva nell'album</button>
     </template>
 

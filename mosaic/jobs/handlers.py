@@ -230,24 +230,42 @@ def h_poster(ctx: Context, job: Job, ctl: JobControl) -> None:
 
 
 def h_export(ctx: Context, job: Job, ctl: JobControl) -> None:
-    """Foto copiate (migliorate, ritagliate) in una cartella a scelta (D-30, D-34), una alla volta con il progresso."""
+    """Foto copiate (migliorate, ritagliate, convertite) in una cartella o in uno zip da scaricare (D-30, D-34, D-36)."""
+    import shutil
+
     from mosaic.organize import enhance, export_photos, smart_crop
 
     payload = job.payload
     look, crop = payload.get("enhance"), payload.get("crop")
     opts = export_photos.Options(raw=bool(payload.get("raw")), videos=bool(payload.get("videos", True)),
                                  enhance=enhance.Options(**look) if look else None,
-                                 crop=smart_crop.Format(**crop) if crop else None)
-    result = export_photos.export(ctx, list(payload["uids"]), Path(payload["dest"]), opts,
-                                  progress=lambda done, total, label: ctl.progress(done / max(total, 1), label, done, total),
-                                  cancel=ctl.cancel)
+                                 crop=smart_crop.Format(**crop) if crop else None,
+                                 fmt=str(payload.get("fmt") or "original"), quality=int(payload.get("quality") or 92),
+                                 max_side=payload.get("max_side"), numbered=bool(payload.get("numbered")))
+    as_zip = bool(payload.get("zip"))
+    dest = export_photos.zip_dir(ctx) / f"staging-{job.id}" if as_zip else Path(payload["dest"])
+    try:
+        result = export_photos.export(ctx, list(payload["uids"]), dest, opts,
+                                      progress=lambda done, total, label: ctl.progress(done / max(total, 1), label, done, total),
+                                      cancel=ctl.cancel)
+        if as_zip and not ctl.cancel.is_set():
+            ctl.progress(0.99, "Preparo lo zip…")
+            export_photos.make_zip(dest, export_photos.zip_dir(ctx) / f"export-{job.id}.zip")
+            export_photos.prune_zips(ctx)
+    finally:
+        if as_zip:
+            shutil.rmtree(dest, ignore_errors=True)
     for error in result.errors:
         ctx.db.log_error("export", "", error)
-    cut = f", {result.cropped} ritagliate" if result.cropped else ""
-    better = f", {result.enhanced} migliorate" if result.enhanced else ""
-    left = f", {result.skipped} saltate" if result.skipped and crop else ""  # con il ritaglio: video e file illeggibili
-    problems = f", {len(result.errors)} con problemi" if result.errors else ""
-    ctl.progress(1.0, f"{result.copied} foto esportate in {result.folder}{cut}{better}{left}{problems}")
+    notes = [f"{n} {what}" for n, what in ((result.cropped, "ritagliate"), (result.enhanced, "migliorate"),
+                                           (result.converted, "convertite"), (result.unimproved, "non migliorabili (copiate com'erano)"))
+             if n]
+    if result.skipped and (crop or not opts.videos):
+        notes.append(f"{result.skipped} saltate")  # con il ritaglio: video e file illeggibili
+    if result.errors:
+        notes.append(f"{len(result.errors)} con problemi")
+    where = "pronte da scaricare" if as_zip else f"esportate in {result.folder}"
+    ctl.progress(1.0, f"{result.copied} foto {where}" + "".join(f", {n}" for n in notes))
 
 
 def h_cleanup(ctx: Context, job: Job, ctl: JobControl) -> None:

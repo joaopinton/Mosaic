@@ -1,8 +1,10 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { api, type BatchActionName } from '../lib/api'
-import { clearSelection, currentAlbum, hasSelection, libraryVersion, selected } from '../lib/store'
+import { runBatchSafe } from '../lib/batch'
+import { clearSelection, currentAlbum, hasSelection, libraryVersion, selected, viewer } from '../lib/store'
 import { errorMessage, toast } from '../lib/toast'
+import { pushUndo, undoAction } from '../lib/undo'
 import type { Album } from '../lib/types'
 import Dialog from './Dialog.vue'
 import Dropdown from './Dropdown.vue'
@@ -19,6 +21,7 @@ const removing = ref(false)
 const exporting = ref(false)
 const exportUids = ref<string[]>([])
 const exportCrop = ref(false)
+const exportMode = ref<'zip' | 'folder' | undefined>(undefined)
 
 /** Titolo proposto per una nuova selezione: «Selezione del 20 ottobre». */
 function defaultTitle(now = new Date()): string {
@@ -30,11 +33,23 @@ function askNew(): void {
   newAlbum.value = true
 }
 
-function askExport(crop = false): void {
+/** Titolo della cartella o dello zip: l'album aperto, altrimenti «Selezione del 20 ottobre». */
+const exportTitle = computed(() => (currentAlbum.value ? currentAlbum.value.title : defaultTitle()))
+
+function askExport(mode?: 'zip' | 'folder', crop = false): void {
   exportUids.value = [...selected.value] // fotografia della selezione: resta valida anche se poi cambia
   exportCrop.value = crop // «Ritaglia…» apre lo stesso dialogo con il ritaglio a formato acceso (D-34)
+  exportMode.value = mode
   exporting.value = true
 }
+
+/** Lo stato attuale delle foto selezionate che il server già conosce: se sono tutte preferite il pulsante le toglie. */
+function allFlagged(flag: 'favorite' | 'private'): boolean {
+  const known = new Map(viewer.photos.map((p) => [p.uid, p[flag]]))
+  return selected.value.length > 0 && selected.value.every((uid) => known.get(uid) === true)
+}
+const allFavorite = computed(() => allFlagged('favorite'))
+const allPrivate = computed(() => allFlagged('private'))
 
 async function loadAlbums(): Promise<void> {
   try {
@@ -48,15 +63,11 @@ onMounted(loadAlbums)
 async function run(action: BatchActionName, label: string, album?: string): Promise<void> {
   if (busy.value) return
   busy.value = true
-  const uids = [...selected.value]
   try {
-    const { changed } = await api.batch(uids, action, album)
-    toast(`${label}: ${changed} foto`)
-    clearSelection()
-    libraryVersion.value++
-    void loadAlbums()
-  } catch (error) {
-    toast(errorMessage(error), 'error')
+    if (await runBatchSafe([...selected.value], action, label, album)) {
+      clearSelection()
+      void loadAlbums()
+    }
   } finally {
     busy.value = false
   }
@@ -71,9 +82,16 @@ function afterRemove(): void {
 async function createAndAdd(): Promise<void> {
   const title = newTitle.value.trim()
   if (!title) return
+  const uids = [...selected.value]
   try {
     const created = await api.createAlbum(title, [...selected.value])
-    toast(`«${title}» salvata con ${created.photo_count} foto`)
+    let current = created.uid
+    const entry = pushUndo({
+      label: `«${title}» salvata (${created.photo_count} foto)`,
+      undo: () => api.deleteAlbum(current),
+      redo: async () => void (current = (await api.createAlbum(title, [...uids])).uid),
+    })
+    toast(`«${title}» salvata con ${created.photo_count} foto`, 'default', undoAction(entry), 8000)
     newAlbum.value = false
     newTitle.value = ''
     clearSelection()
@@ -89,8 +107,12 @@ async function createAndAdd(): Promise<void> {
   <Transition name="bar">
     <div v-if="hasSelection" class="bar" role="toolbar" aria-label="Azioni sulle foto selezionate">
       <span class="count">{{ selected.length }} selezionate</span>
-      <button type="button" class="btn sm" :disabled="busy" @click="run('favorite', 'Aggiunte ai preferiti')"><Icon name="heart" /> Preferite</button>
-      <button type="button" class="btn sm" :disabled="busy" @click="run('private', 'Rese private')"><Icon name="lock" /> Private</button>
+      <button type="button" class="btn sm" :disabled="busy" data-test="bar-favorite"
+              @click="allFavorite ? run('unfavorite', 'Tolte dai preferiti') : run('favorite', 'Aggiunte ai preferiti')">
+        <Icon name="heart" /> {{ allFavorite ? 'Non preferite' : 'Preferite' }}</button>
+      <button type="button" class="btn sm" :disabled="busy" data-test="bar-private"
+              @click="allPrivate ? run('public', 'Rese di nuovo visibili') : run('private', 'Rese private')">
+        <Icon name="lock" /> {{ allPrivate ? 'Non private' : 'Private' }}</button>
       <Dropdown label="Salva in un album o in una selezione" btn-class="btn sm" align="left" placement="up">
         <template #button><Icon name="album" /> Salva in…</template>
         <button type="button" class="menu-item" role="menuitem" data-test="bar-new-album" @click="askNew"><Icon name="plus" /> Nuova selezione o album…</button>
@@ -102,20 +124,21 @@ async function createAndAdd(): Promise<void> {
           <span v-if="a.source" class="from truncate">da {{ a.source.title }}</span>
         </button>
       </Dropdown>
-      <button type="button" class="btn sm" data-test="bar-export" @click="askExport()"><Icon name="download" /> Esporta…</button>
-      <button type="button" class="btn sm" data-test="bar-crop" @click="askExport(true)"><Icon name="crop" /> Ritaglia…</button>
+      <button type="button" class="btn sm" data-test="bar-download" @click="askExport('zip')"><Icon name="download" /> Scarica…</button>
+      <button type="button" class="btn sm" data-test="bar-export" @click="askExport('folder')"><Icon name="folderOpen" /> Esporta…</button>
+      <button type="button" class="btn sm" data-test="bar-crop" @click="askExport(undefined, true)"><Icon name="crop" /> Ritaglia…</button>
       <button type="button" class="btn sm" :disabled="busy" @click="run('archive', 'Archiviate')"><Icon name="archive" /> Archivia</button>
-      <button type="button" class="btn ghost sm" @click="run('restore', 'Ripristinate')">Ripristina</button>
+      <button type="button" class="btn ghost sm" :disabled="busy" @click="run('restore', 'Ripristinate dall\'archivio')">Ripristina</button>
       <button v-if="currentAlbum" type="button" class="btn sm" :disabled="busy" data-test="bar-out-of-album"
               @click="run('remove_from_album', 'Tolte da questo album', currentAlbum.uid)"><Icon name="x" /> Togli dall'album</button>
       <button type="button" class="btn danger sm" :disabled="busy" data-test="bar-remove" @click="removing = true"><Icon name="trash" /> Elimina…</button>
-      <button type="button" class="btn ghost icon sm" aria-label="Deseleziona tutto" @click="clearSelection"><Icon name="x" /></button>
+      <button type="button" class="btn ghost icon sm" aria-label="Deseleziona tutto" title="Deseleziona tutto (Esc)" @click="clearSelection"><Icon name="x" /></button>
     </div>
   </Transition>
 
   <RemovePhotosDialog :open="removing" :uids="selected" @close="removing = false" @done="afterRemove" />
 
-  <ExportDialog :open="exporting" :uids="exportUids" :title="defaultTitle()" :crop="exportCrop" @close="exporting = false" />
+  <ExportDialog :open="exporting" :uids="exportUids" :title="exportTitle" :crop="exportCrop" :mode="exportMode" @close="exporting = false" />
 
   <Dialog :open="newAlbum" title="Nuova selezione o album" size="sm" @close="newAlbum = false">
     <form class="field" @submit.prevent="createAndAdd">
