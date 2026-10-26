@@ -175,3 +175,28 @@ def test_descriptions_join_the_pipeline_only_when_automatic(ctx, monkeypatch, mo
 
 def test_descriptions_are_off_the_pipeline_by_default(ctx):
     assert ctx.cfg.llm.mode == "on-demand"
+
+
+def test_export_has_its_own_lane_and_never_waits_behind_a_long_analysis(ctx):
+    """Con un solo worker occupato da un'analisi lunga, «Esporta» deve partire subito (prima restava in coda per ore)."""
+    release = threading.Event()
+    started = threading.Event()
+    ran = []
+
+    def long_analysis(c, job, ctl):
+        started.set()
+        release.wait(10)
+
+    runner = JobRunner(ctx, {"analyze": long_analysis, "export": lambda c, job, ctl: ran.append("export")}, workers=1)
+    runner.start()
+    try:
+        runner.submit("analyze")
+        assert started.wait(5)
+        runner.submit("export")
+        deadline = time.monotonic() + 5
+        while not ran and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert ran == ["export"]  # mentre l'analisi è ancora in corso
+    finally:
+        release.set()
+        runner.stop()

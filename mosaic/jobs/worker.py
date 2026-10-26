@@ -17,6 +17,7 @@ log = logging.getLogger(__name__)
 # (con 8 GB di RAM, per esempio, SigLIP e l'LLM non devono mai convivere).
 # Il poster e il backup YAML (parte dopo ogni modifica manuale) non devono aspettare la fine di un'analisi lunga.
 PARALLEL_TYPES = {"process", "poster", "backup", "export"}
+INTERACTIVE_TYPES = {"export", "poster"}   # lanciati da un clic: hanno un worker tutto per loro, mai dietro un'analisi lunga
 MAX_ATTEMPTS = 2
 
 
@@ -75,6 +76,9 @@ class JobRunner:
             t = threading.Thread(target=self._loop, name=f"mosaic-worker-{i}", daemon=True)
             t.start()
             self._threads.append(t)
+        lane = threading.Thread(target=self._loop, args=(INTERACTIVE_TYPES & set(self.handlers),), name="mosaic-worker-interactive", daemon=True)
+        lane.start()
+        self._threads.append(lane)
 
     def stop(self, timeout: float = 5.0) -> None:
         self._stop.set()
@@ -146,17 +150,17 @@ class JobRunner:
         return False
 
     # --- interno ------------------------------------------------------------------
-    def _next_job(self) -> Job | None:
+    def _next_job(self, allowed: set[str] | None = None) -> Job | None:
         with self._lock:
             excluded = None if self._running_heavy == 0 else {t for t in self.handlers if t not in PARALLEL_TYPES}
-            job = self.queue.claim(set(self.handlers), excluded)
+            job = self.queue.claim(allowed if allowed is not None else set(self.handlers), excluded)
             if job is not None and job.type not in PARALLEL_TYPES:
                 self._running_heavy += 1
             return job
 
-    def _loop(self) -> None:
+    def _loop(self, allowed: set[str] | None = None) -> None:
         while not self._stop.is_set():
-            job = self._next_job()
+            job = self._next_job(allowed)
             if job is None:
                 with self._wake:
                     self._wake.wait(timeout=0.5)

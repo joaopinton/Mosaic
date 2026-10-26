@@ -212,3 +212,19 @@ def test_partial_export_still_succeeds_and_reports_the_missing_ones(ctx, photos,
     original.unlink()
     result = export_photos.export(ctx, photos, tmp_path / "parziale", export_photos.Options())
     assert result.copied == 2 and result.not_found == 1
+
+
+def test_files_wrongly_flagged_missing_are_recovered_if_they_exist(ctx, photos, tmp_path):
+    ctx.db.conn().execute("UPDATE files SET missing=1")  # segnati mancanti, ma su disco ci sono
+    result = export_photos.export(ctx, photos, tmp_path / "recupero", export_photos.Options())
+    assert result.copied == 3
+    assert ctx.db.scalar("SELECT COUNT(*) FROM files WHERE missing=1") == 0
+
+
+def test_empty_export_explains_why(ctx, photos, tmp_path):
+    with pytest.raises(export_photos.ExportError, match="non sono più nel catalogo"):
+        export_photos.export(ctx, ["inesistente"], tmp_path / "x", export_photos.Options())
+    ctx.db.conn().execute("UPDATE photos SET type='video'")
+    ctx.db.conn().execute("UPDATE files SET media_type='video'")
+    with pytest.raises(export_photos.ExportError, match="sono video"):
+        export_photos.export(ctx, photos, tmp_path / "y", export_photos.Options(videos=False))

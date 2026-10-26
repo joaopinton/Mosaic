@@ -24,6 +24,7 @@ import numpy as np
 from PIL import Image
 
 from mosaic.context import Context
+from mosaic.index.indexer import refresh_primary
 from mosaic.index.store import abs_path, photo_files, primary_file
 from mosaic.organize import enhance, smart_crop
 from mosaic.thumbs.convert import ensure_source
@@ -166,7 +167,7 @@ def _items(ctx: Context, uids: list[str], opts: Options) -> tuple[list[_Item], i
     skipped = 0
     for uid in dict.fromkeys(uids):
         row = rows.get(uid)
-        main = primary_file(ctx.db, row["id"]) if row else None
+        main = _usable_primary(ctx, row["id"]) if row else None
         unwanted = main is not None and ((main["media_type"] == "video" and not opts.videos)
                                          or (opts.crop is not None and not _can_enhance(main)))  # si ritagliano solo foto
         if row is None or main is None or unwanted:
@@ -176,6 +177,46 @@ def _items(ctx: Context, uids: list[str], opts: Options) -> tuple[list[_Item], i
                       and (opts.raw if f["media_type"] != "video" else opts.videos))
         items.append(_Item(row["id"], main, extra))
     return items, skipped
+
+
+def _usable_primary(ctx: Context, photo_id: int) -> sqlite3.Row | None:
+    """Il file principale della foto. Se il catalogo lo dà per mancante ma su disco c'è (tornato, o segnato per errore), lo recupera."""
+    main = primary_file(ctx.db, photo_id)
+    if main is not None:
+        return main
+    for row in photo_files(ctx.db, photo_id, include_missing=True):
+        if row["media_type"] != "sidecar" and abs_path(row).exists():
+            with ctx.db.tx() as conn:
+                conn.execute("UPDATE files SET missing=0 WHERE photo_id=? AND id=?", (photo_id, row["id"]))
+                refresh_primary(conn, photo_id)
+            return primary_file(ctx.db, photo_id) or row
+    return None
+
+
+def _why_empty(ctx: Context, uids: list[str], opts: Options) -> str:
+    """Perché non c'è niente da esportare, con i numeri: foto non trovate, file mancanti, video o RAW esclusi."""
+    marks = ",".join("?" * len(uids))
+    rows = {r["uid"]: r for r in ctx.db.all(f"SELECT id, uid FROM photos WHERE uid IN ({marks})", tuple(uids))}
+    unknown = sum(1 for u in set(uids) if u not in rows)
+    gone = videos = other = 0
+    for row in rows.values():
+        files = [f for f in photo_files(ctx.db, row["id"], include_missing=True) if f["media_type"] != "sidecar"]
+        if not files or all(f["missing"] or not abs_path(f).exists() for f in files):
+            gone += 1
+        elif not opts.videos and all(f["media_type"] == "video" for f in files):
+            videos += 1
+        else:
+            other += 1
+    parts = []
+    if unknown:
+        parts.append(f"{unknown} non sono più nel catalogo (ricarica la pagina)")
+    if gone:
+        parts.append(f"{gone} hanno l'originale mancante sul disco (spostato o rinominato: in Libreria usa «Indica la nuova posizione…»)")
+    if videos:
+        parts.append(f"{videos} sono video e «Anche i video» è spento")
+    if other:
+        parts.append(f"{other} non sono foto ritagliabili" if opts.crop is not None else f"{other} non esportabili")
+    return "nessuna foto da esportare: " + "; ".join(parts) if parts else "nessuna foto da esportare"
 
 
 def _faces(ctx: Context, photo_id: int) -> list[enhance.Face]:
@@ -301,9 +342,9 @@ def _write_photo(ctx: Context, item: _Item, adjust: enhance.Adjust | None, opts:
             if pil_format == "JPEG":
                 extra.update(quality=opts.quality, optimize=True, subsampling=0)
             elif pil_format == "WEBP":
-                extra.update(quality=opts.quality, method=4)
+                extra.update(quality=opts.quality, method=2)
             else:
-                extra.update(optimize=True)
+                extra.update(compress_level=3)  # optimize=True rendeva il PNG 5 volte più lento per pochi percento in meno
             out.save(tmp, pil_format, **extra)
         os.replace(tmp, target)
     finally:
@@ -321,7 +362,7 @@ def export(ctx: Context, uids: list[str], dest: Path, opts: Options,
     items, skipped = _items(ctx, uids, opts)
     result = Result(folder=dest, skipped=skipped)
     if not items:
-        raise ExportError("nessuna foto da esportare")
+        raise ExportError(_why_empty(ctx, uids, opts))
     _check_space(dest, _needed_bytes(items))
     dest.mkdir(parents=True, exist_ok=True)
     if any(_inside(dest, Path(root)) for root in ctx.cfg.library_roots):
